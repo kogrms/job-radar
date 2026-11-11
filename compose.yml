@@ -1,0 +1,61 @@
+# Local stack: our Postgres (pgvector) + Redis + API + worker, plus self-hosted Langfuse.
+# Local-only by design: every published port is bound to 127.0.0.1, and the job_radar DB password is a
+# dev default. Do not deploy this file as is.
+# `docker compose up -d db redis` is enough for tests; `docker compose up -d` brings up everything.
+include:
+  - compose.langfuse.yml
+
+x-app: &app
+  build: .
+  # Only what the app needs; Langfuse admin and storage secrets stay out of app containers.
+  environment:
+    DATABASE_URL: postgresql+asyncpg://job_radar:job_radar@db:5432/job_radar
+    REDIS_URL: redis://redis:6379/0
+    LANGFUSE_BASE_URL: http://langfuse-web:3000
+    LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+    LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+  depends_on:
+    db: {condition: service_healthy}
+    redis: {condition: service_healthy}
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: job_radar
+      POSTGRES_PASSWORD: job_radar
+      POSTGRES_DB: job_radar
+    ports:
+      - 127.0.0.1:5433:5432
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U job_radar"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - 127.0.0.1:6380:6379
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  api:
+    <<: *app
+    command: sh -c "alembic upgrade head && uvicorn job_radar.api:app --host 0.0.0.0 --port 8000"
+    ports:
+      - 127.0.0.1:8000:8000
+
+  worker:
+    <<: *app
+    command: arq job_radar.worker.WorkerSettings
+
+volumes:
+  db_data:

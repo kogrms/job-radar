@@ -80,3 +80,54 @@ False alarms: none. Counted for the eval table: 11 findings, 5 real bugs, 4 real
   write in `apply_fetch` goes through the unit of work and nothing relies on implicit synchronization.
 - **Rule:** verify a claimed defect before presenting it as one, even in an explanation. "I think it's stale" goes
   to the owner as a hypothesis, with the check that would settle it.
+
+## 2026-11-11 — an unverified API claim written into upstream-bugs.md in week 0
+
+- **What:** the week-0 note said Greenhouse EU boards need `boards-api.eu.greenhouse.io`. The host does not resolve;
+  EU boards are served by the regular API. The week-0 script tried the EU host first and silently fell back, so the
+  claim was inferred from code, never observed.
+- **Caught:** probing the live APIs before writing the PR 3 collectors (`dig`, `curl`).
+- **Fix:** note corrected; collector uses one host.
+- **Rule:** a behaviour claim about an external API goes into the docs only with the request that showed it.
+
+## 2026-11-11 — Greenhouse HTML-escaped content (caught by a test, not shipped)
+
+- **What:** the first Greenhouse parser stripped tags and then unescaped entities, so `&lt;p&gt;` became `<p>` in
+  the stored text. Same order as the generic HTML helper; Greenhouse is the only API that double-encodes.
+- **Caught:** the synthetic fixture built with `html.escape(...)`, mirroring the live response, failed the test.
+- **Fix:** unescape first for Greenhouse. Live check after the fix: 0 Greenhouse texts with leftover tags.
+
+## 2026-11-11 — PR 3 independent review (reviewer: Claude Sonnet 5.5 with `.claude/agents/pr-reviewer.md` instructions)
+
+The reviewer found no path from a failed or truncated fetch to `apply_fetch(complete=True)`; it live-checked that
+missing boards are 404 on all four ATS and that Lever/Greenhouse return full listings (302 and 783 postings).
+New agent definitions are not picked up mid-session, so it ran as a general-purpose agent told to follow the file.
+
+| # | Finding | Verdict | Action |
+|---|---|---|---|
+| 1 | `BOARDS_FILE=` (empty, as in `.env.example`) parsed as `Path('.')` → `IsADirectoryError` every cron tick | **Real bug** (reproduced) | `env_ignore_empty=True`; test |
+| 2A | Mutant `complete=True` in `collect_board` survived: nothing checked that incompleteness reaches storage | **Real test gap** | Test: truncated Greenhouse listing through `collect_board` closes nothing |
+| 2B | Shape guards of Greenhouse/Workable/Lever untested; failure table ran on Ashby only | **Real test gap** | Failure table × all four sources (+ bad shape and missing id per ATS) |
+| 2C | Mutant "seen_at after the fetch" survived | **Real test gap** | Test: slow older fetch loses to a faster newer one → `stale`, closes nothing |
+| 3 | Greenhouse without `meta.total` counted as complete (fail-open) | Real, low likelihood | Missing total → not complete; test |
+| 4 | Complete empty listing on a board with open postings closes all of them | Design residual | Decision record: accepted for now, revisit in week 2 |
+| 5 | `TooManyRedirects` / `DecodingError` escape as exceptions | Real, minor (fail-safe) | Redirect loop → failed fetch; decoding error retried; tests |
+| 6 | Lever `region` not in the board key | NIT, no live case | Decision record |
+| 7 | Retry budget close to arq's default 300 s job timeout | Real, minor | `job_timeout = 600` |
+| 8 | Spec named `boards.example.yml`; manual `collect_all` in a cron hour queues 0 | NIT | Spec fixed; noted in CLAUDE.md commands |
+
+False alarms: none. Mutation re-check after fixes (in a temp copy): six mutants, each fails at least one test.
+
+## 2026-11-11 — second mutation-script accident: zsh does not word-split `$FILES`
+
+- **What:** `FILES="a b c"; for f in $FILES` is one iteration in zsh. The backup `cp` failed, the restore failed,
+  and five mutants accumulated in the real `worker.py`, `greenhouse.py`, `workable.py` (the latter two untracked,
+  so git could not restore them). The reported mutation results were invalid.
+- **Caught:** `cp: ... No such file or directory` in the output and failure counts growing 1→5 across "independent"
+  mutants.
+- **Fix:** each mutation reversed by an exact one-occurrence replacement in reverse order; then `ruff format
+  --check` (no diff), 72 tests green. The mutation check was redone with a Python script that works on a temporary
+  copy of the repo and asserts the working tree is unchanged; a baseline run of the copy passes first.
+- **Rule (replaces the 'trap' rule):** mutation checks never touch the working tree — copy the repo to a temp dir,
+  mutate there, run a baseline first. Second shell accident of the day: stop using ad-hoc shell loops for anything
+  that writes files.

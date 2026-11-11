@@ -8,7 +8,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", extra="ignore", env_ignore_empty=True
+    )  # "X=" means unset
 
     database_url: str = "postgresql+asyncpg://job_radar:job_radar@localhost:5433/job_radar"
     redis_url: str = "redis://localhost:6380/0"
@@ -19,6 +21,8 @@ class Settings(BaseSettings):
 
     # Private data (past decisions, vacancy texts, labels). Never copied into the repo; unset in CI.
     private_dir: Path | None = None
+    # Boards to poll (YAML, see examples/boards.yml). Personal, so it lives in the private dir.
+    boards_file: Path | None = None
 
 
 @lru_cache

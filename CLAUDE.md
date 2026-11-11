@@ -28,6 +28,11 @@ Raw vacancy text is stored at collection time, always (lesson from week 0: close
 - Tests only need `docker compose up -d db redis`, then `uv run alembic upgrade head && uv run pytest`.
 - Checks: `uv run ruff check && uv run ruff format --check && uv run mypy`.
 - Langfuse UI: http://localhost:3000, user `admin@example.com`, password `LANGFUSE_ADMIN_PASSWORD` in `.env`.
+- Collect once through the queue: enqueue `collect_all` (or `collect_board`), then
+  `BOARDS_FILE=... uv run arq job_radar.worker.WorkerSettings --burst`. The board list is private
+  (`/Users/k/job-search/_support/boards.yml`); new ATS: skill `.claude/skills/add-ats-collector`.
+  `collect_all` job ids are per hour: a manual run in an hour the cron already ran queues nothing — enqueue
+  `collect_board` jobs directly instead.
 - Langfuse ClickHouse: `curl -u clickhouse:$LANGFUSE_CH_PASSWORD --data-binary "SELECT ..." http://localhost:8123/`.
 
 ## Rules
@@ -43,6 +48,8 @@ Raw vacancy text is stored at collection time, always (lesson from week 0: close
 - Never send the owner's email to third-party services (e.g. hh.ru API's HH-User-Agent wants one — use page JSON-LD instead).
 - Downloaded third-party code is untrusted: do not run it; give the owner the command to run.
 - Scripts that delete or rewrite data files must have a `main()` guard and be idempotent (see `agent-log.md`, 2026-11-05).
+- Mutation checks run on a temporary copy of the repo, never on the working tree; run the unmutated copy first as a
+  baseline (two accidents on 2026-11-11, see `agent-log.md`). No ad-hoc shell loops that write files.
 - Local stack security baseline (checked 2026-11-11): every published port binds to 127.0.0.1; app containers get
   only the env vars they need (never the whole `.env`); app image runs as a non-root user; health endpoints return
   error class names only; Langfuse self sign-up is disabled; CI token is read-only and actions are pinned to SHAs.
@@ -62,6 +69,7 @@ A trimmed agentic workflow: keep the checkpoints that catch bugs, drop team-only
 3. **Independent review for risky PRs only:** queue/retries, per-step state, idempotency, the eligibility classifier,
    eval harness. The reviewer is a separate read-only session, preferably a different model. It gets the diff and the
    spec, not the implementer's reasoning. Findings go back to the implementer until resolved.
+   The reviewer is defined in `.claude/agents/pr-reviewer.md` (Sonnet; no Edit/Write tools).
    Record every finding in `agent-log.md` with a verdict: real bug / style / false alarm.
 4. **Human checkpoint before merge, always.** The owner reads the diff itself for core code (state, queue,
    classifier, evals), not a summary of it. The owner must be able to explain every line there in an interview.

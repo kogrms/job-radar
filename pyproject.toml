@@ -15,6 +15,7 @@ dependencies = [
     "redis",
     "httpx",
     "langfuse",
+    "pyyaml>=6.0.3",
 ]
 
 [dependency-groups]
@@ -24,6 +25,8 @@ dev = [
     "ruff",
     "mypy",
     "hypothesis>=6.170.15",
+    "respx>=0.23.1",
+    "types-pyyaml>=6.0.12.20261111",
 ]
 
 [build-system]

@@ -72,3 +72,11 @@ Non-obvious choices with the alternatives we rejected. Format: context — optio
   commits carry no trailer, so `git log` shows the split. Reviewer models are not co-authors.
 - **Cost:** some conservative teams may read AI co-authorship negatively; a bot account would show the
   agent-proposes / human-approves flow more literally, but costs a day of setup.
+
+## 2026-11-11 — one flush per new posting in apply_fetch
+
+- **Context:** each new vacancy needs its `id` before its `opened` event can reference it.
+- **Options:** `flush()` per new posting; one batched `INSERT ... RETURNING id` for all new postings.
+- **Decision:** flush per posting. Boards have tens to hundreds of postings and almost all of them are new only on
+  the first fetch; the code stays a plain unit-of-work loop.
+- **Cost:** N round trips on a board's first fetch. Revisit if a board brings thousands of new postings at once.

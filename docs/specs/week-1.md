@@ -59,9 +59,22 @@ Tests (`hypothesis`, against a real Postgres in docker):
 - applying the same batch N times gives the same rows and exactly one `opened` event per posting;
 - any interleaving of complete fetches ends in the same final state as applying the last fetch;
 - a failed/partial fetch changes nothing about `closed_at`;
-- `dedup_key` is stable under case, whitespace, punctuation and seniority-prefix variations.
+- `dedup_key` is stable under case, whitespace, punctuation, accents, legal suffixes and seniority spellings
+  ("Sr." = "Senior"), but "Senior X" and "X" stay different jobs.
+
+Added during implementation: a `boards` table whose row lock serializes concurrent fetches of one board and whose
+`last_fetch_at` makes older fetches (late retries) stale, so out-of-order arrival cannot regress state.
 
 **Verify:** tests green; reviewer finds no way to get a duplicate row or a spurious close.
+
+**Status:** implemented 2026-11-11 on `pr2-storage`, independently reviewed (11 findings, see `agent-log.md`),
+fixes applied. 18 tests pass. Property tests compare every stored column with a reference model. Mutation check:
+partial fetch closes / no stale guard / never clears `closed_at` / no row lock / reopen hides change — each fails
+at least one test. A reopened posting with new content emits both `reopened` and `changed`.
+
+**Carried into PR 3:** sanitize NUL characters; never report an error page or empty body as a complete fetch;
+decide whether `org` is case-insensitive per ATS and normalize it. **Into PR 4:** index `vacancy_events(kind, at)`
+for polling.
 
 ### PR 3 — ATS collectors
 

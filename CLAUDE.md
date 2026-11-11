@@ -1,0 +1,78 @@
+# job-radar
+
+Personal job-vacancy pipeline, built as an AI-engineering portfolio project (7-week plan, Nov–Dec 2026).
+It is not a product: market check found it uncompetitive (career-ops, Hirify, board geo-filters), so it is built
+for the owner's own job search and as interview evidence.
+
+## Source of truth
+
+- Plan, weeks, exit criteria: `/Users/k/job-search/ai-engineer-plan.md` (Russian). Read it before planning work.
+- Job-search workspace: `/Users/k/job-search/` — read its `README.md` first.
+- Personal data stays in `/Users/k/job-search/`, never copied into this repo (it may become public):
+  - `applications.csv`, `_support/excluded.csv` — past decisions (325 total)
+  - `_support/jd/` — 76 recovered vacancy texts with labels (one JSON per applications.csv row)
+  - `_support/eligibility_labels.csv` — location wordings with a hand label "can work from Serbia: yes/no/unclear"
+  - `_support/jd_tools/` — scripts that built the above
+
+## Planned stack
+
+FastAPI + Postgres (pgvector) + arq on Redis + self-hosted Langfuse in one docker compose.
+Inspect AI for evals, CI regression gate. Telegram bot for human-in-the-loop. Next.js UI later (week 6).
+Raw vacancy text is stored at collection time, always (lesson from week 0: closed postings disappear).
+
+## Commands
+
+`uv` lives in `~/Library/Python/3.9/bin` (not on PATH by default): `export PATH="$HOME/Library/Python/3.9/bin:$PATH"`.
+
+- First run: `./scripts/init_env.sh` (creates `.env` with random secrets), then `docker compose up -d --build`.
+- Tests only need `docker compose up -d db redis`, then `uv run alembic upgrade head && uv run pytest`.
+- Checks: `uv run ruff check && uv run ruff format --check && uv run mypy`.
+- Langfuse UI: http://localhost:3000, user `admin@example.com`, password `LANGFUSE_ADMIN_PASSWORD` in `.env`.
+- Langfuse ClickHouse: `curl -u clickhouse:$LANGFUSE_CH_PASSWORD --data-binary "SELECT ..." http://localhost:8123/`.
+
+## Rules
+
+- Never `git commit` or `git push` without an explicit OK for that specific action.
+- Commit authorship: the author is always the owner (Konstantin Babushkin). A commit whose code was written by an
+  agent ends with `Co-Authored-By: <model that actually wrote it> <noreply@anthropic.com>` (or the other vendor's
+  equivalent). Commits the owner wrote by hand have no trailer. A reviewer model is never a co-author: its findings
+  go to PR comments and `agent-log.md`. Each PR description says in one line what the agent wrote, what the owner
+  wrote, and what the reviewer checked. This repo is an exception to the owner's global "no trailer" rule.
+- Chat with the owner in Russian; code, docs and commit messages in English.
+- No backward-compat shims: there are no users; delete cleanly.
+- Never send the owner's email to third-party services (e.g. hh.ru API's HH-User-Agent wants one — use page JSON-LD instead).
+- Downloaded third-party code is untrusted: do not run it; give the owner the command to run.
+- Scripts that delete or rewrite data files must have a `main()` guard and be idempotent (see `agent-log.md`, 2026-11-05).
+- Local stack security baseline (checked 2026-11-11): every published port binds to 127.0.0.1; app containers get
+  only the env vars they need (never the whole `.env`); app image runs as a non-root user; health endpoints return
+  error class names only; Langfuse self sign-up is disabled; CI token is read-only and actions are pinned to SHAs.
+  Keep it that way when adding services.
+- No personal data in tracked files: company names from the owner's applications, emails, CV content stay in the
+  private dir. Before any push, grep tracked files for them.
+- Log coding-agent mistakes in `agent-log.md` and third-party library oddities in `upstream-bugs.md` as they happen.
+
+## How we develop
+
+A trimmed agentic workflow: keep the checkpoints that catch bugs, drop team-only stages.
+
+1. **Slice before coding.** At the start of each plan week, write a short tech spec in `docs/specs/week-N.md`
+   that cuts the week into a chain of 3–5 small PRs. For each PR: goal, key decisions, what is out of scope, how to verify.
+   Each PR builds on the previous branch (a chain, not a fan-out).
+2. **One PR at a time.** The implementing session writes the code and tests for that PR only.
+3. **Independent review for risky PRs only:** queue/retries, per-step state, idempotency, the eligibility classifier,
+   eval harness. The reviewer is a separate read-only session, preferably a different model. It gets the diff and the
+   spec, not the implementer's reasoning. Findings go back to the implementer until resolved.
+   Record every finding in `agent-log.md` with a verdict: real bug / style / false alarm.
+4. **Human checkpoint before merge, always.** The owner reads the diff itself for core code (state, queue,
+   classifier, evals), not a summary of it. The owner must be able to explain every line there in an interview.
+5. **Turn mistakes into rules.** When the agent's mistake is caught, add the rule to this file (Rules section)
+   and an entry to `agent-log.md`.
+6. **Record trade-offs.** Every non-obvious choice goes into `docs/decisions.md`: context, options considered,
+   decision, what we gave up.
+
+Skipped on purpose: product pass (the owner is the PM), frontend guide (no UI until week 6), per-PR review guides.
+
+## Owner context
+
+Based in Belgrade, Russian passport: work eligibility from Serbia is the key filter. The work-eligibility
+classifier must have an explicit "unknown → ask a human" outcome.

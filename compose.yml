@@ -56,6 +56,16 @@ services:
   worker:
     <<: *app
     command: arq job_radar.worker.WorkerSettings
+    environment:
+      DATABASE_URL: postgresql+asyncpg://job_radar:job_radar@db:5432/job_radar
+      REDIS_URL: redis://redis:6379/0
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      BOARDS_FILE: /config/boards.yml
+    volumes:
+      # Only the board list, read-only. The rest of the private dir never enters a container.
+      - ${BOARDS_FILE_HOST:-./examples/boards.yml}:/config/boards.yml:ro
 
 volumes:
   db_data:

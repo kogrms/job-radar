@@ -83,8 +83,17 @@ for polling.
   `/Users/k/job-search/_support/jd_tools/fetch_jd.py`, which already handles the EU endpoints.
 - `httpx.AsyncClient` with timeouts, retries with backoff on 429/5xx, a polite User-Agent with no personal data.
 - arq task `collect_board(source, org)` → `upsert_postings`; arq cron runs all boards every N hours.
-- Board list from a YAML file outside the repo (path in env); the repo ships `boards.example.yml`.
+- Board list from a YAML file outside the repo (path in env); the repo ships `examples/boards.yml`.
 - Tests on recorded HTTP responses (`respx`), one fixture per ATS, including an empty board and a 429.
+
+**Status:** implemented 2026-11-11 on `pr3-collectors`. Probed the live APIs first: Ashby/Greenhouse ignore org
+case, Lever/Workable do not; missing boards are 404 everywhere; Greenhouse EU boards use the regular API host;
+Greenhouse `meta.total` gives a completeness check. Failure rule: 404, network errors after retries, non-JSON,
+empty body, unexpected shape, a job without an id → failed fetch, storage not called. Live run on the 34 boards from
+past applications through the queue: 2026 vacancies; second run 34/34 applied with 0 events. Worker container gets
+only `boards.yml`, read-only. Fixtures are synthetic (no real company data); the board list stays private.
+Independent review: 10 findings (1 config bug, 3 test gaps from surviving mutants, fail-open Greenhouse total,
+redirect/decoding errors, timeout) — all handled or recorded in `decisions.md`. 72 tests; six mutants, each caught.
 
 **Verify:** run against 3 real boards → rows appear; second run → 0 new rows, 0 events; a board whose fetch
 fails → nothing closed.

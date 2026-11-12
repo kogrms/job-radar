@@ -1,0 +1,8 @@
+# Copy to your private dir and point BOARDS_FILE (local runs) and BOARDS_FILE_HOST (worker container) at it. `org` is the board name from the ATS URL:
+#   jobs.ashbyhq.com/<org>  ·  job-boards[.eu].greenhouse.io/<org>  ·  jobs[.eu].lever.co/<org>  ·  apply.workable.com/<org>
+boards:
+  - {source: ashby, org: examplecorp, company: Example Corp}
+  - {source: greenhouse, org: examplecorp, company: Example Corp}
+  - {source: lever, org: examplecorp, company: Example Corp}
+  - {source: lever, org: examplecorp-eu, company: Example Corp, region: eu}
+  - {source: workable, org: examplecorp, company: Example Corp}

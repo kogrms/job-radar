@@ -80,3 +80,20 @@ Non-obvious choices with the alternatives we rejected. Format: context — optio
 - **Decision:** flush per posting. Boards have tens to hundreds of postings and almost all of them are new only on
   the first fetch; the code stays a plain unit-of-work loop.
 - **Cost:** N round trips on a board's first fetch. Revisit if a board brings thousands of new postings at once.
+
+## 2026-11-11 — a complete empty listing closes the whole board (accepted for now)
+
+- **Context:** PR 3 review: if an ATS returns a valid empty list during an incident, every open posting of that board
+  gets a `closed` event, then `reopened` on the next poll.
+- **Options:** accept; require two consecutive empty listings before closing (a flag on `boards`); treat "empty while
+  postings are open" as incomplete always.
+- **Decision:** accept for now. Missing boards answer 404 (checked on all four ATS), so the remaining case is an ATS
+  incident; the damage is churn of closed/reopened events, which nothing consumes yet.
+- **Revisit:** in week 2, when closures start to matter (digest, per-step state). The two-empty-listings rule is the
+  likely fix; it belongs in `apply_fetch` under the board lock, with the property-test model updated.
+
+## 2026-11-11 — Lever region is not part of the board key
+
+- **Context:** a board is `(source, org)`; Lever US and EU are different hosts.
+- **Decision:** keep. One Lever site name lives in one region; the config says which. If the same name ever exists in
+  both, add `region` to the key and to `collect_board`'s job id.

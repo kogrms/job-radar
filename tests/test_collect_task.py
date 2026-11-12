@@ -58,24 +58,53 @@ def test_collect_board_stores_then_is_idempotent_and_failures_close_nothing(db_u
     asyncio.run(run())
 
 
-async def test_collect_all_enqueues_each_board_once_per_hour(
-    tmp_path: Path, settings: Settings, monkeypatch: Any
+def test_collect_all_enqueues_once_per_hour_and_respects_min_interval(
+    tmp_path: Path, db_url: str, settings: Settings, monkeypatch: Any
 ) -> None:
     boards = tmp_path / "boards.yml"
     boards.write_text(
-        "boards:\n  - {source: ashby, org: one, company: One}\n  - {source: lever, org: two, company: Two}\n"
+        "boards:\n"
+        "  - {source: ashby, org: one, company: One}\n"
+        "  - {source: lever, org: two, company: Two}\n"
+        "  - {source: himalayas, org: rs, queries: [python]}\n"
     )
     monkeypatch.setenv("BOARDS_FILE", str(boards))
     get_settings.cache_clear()
-    pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-    try:
-        await pool.flushdb()
-        assert await collect_all({"redis": pool}) == 2
-        assert await collect_all({"redis": pool}) == 0  # same hour: job ids collide, nothing new queued
-    finally:
-        await pool.flushdb()
-        await pool.aclose()
-        get_settings.cache_clear()
+
+    async def run() -> None:
+        engine, ctx = _fresh_ctx(db_url)
+        await _truncate(engine)
+        async with engine.begin() as conn:  # all three fetched 2 hours ago: too soon only for daily Himalayas
+            await conn.execute(
+                text(
+                    "INSERT INTO boards (source, org, last_fetch_at) VALUES"
+                    " ('himalayas', 'RS', now() - interval '2 hours'),"
+                    " ('ashby', 'one', now() - interval '2 hours'),"
+                    " ('lever', 'two', now() - interval '2 hours')"
+                )
+            )
+        pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        ctx["redis"] = pool
+        try:
+            await pool.flushdb()
+            assert await collect_all(ctx) == 2  # two ATS boards; Himalayas skipped by MIN_INTERVAL
+            assert await collect_all(ctx) == 0  # same hour: job ids collide, nothing new queued
+            async with engine.begin() as conn:
+                await conn.execute(text("UPDATE boards SET last_fetch_at = now() - interval '21 hours'"))
+            await pool.flushdb()
+            assert await collect_all(ctx) == 3  # a day later Himalayas is due again
+            jobs = {(j.args[0], j.args[1]): j for j in await pool.queued_jobs()}
+            assert jobs[("himalayas", "RS")].kwargs == {"queries": ["python"]}
+            assert jobs[("ashby", "one")].args == ("ashby", "one", "One", None)
+            assert jobs[("ashby", "one")].kwargs == {}  # ATS jobs keep the old argument shape
+        finally:
+            await pool.flushdb()
+            await pool.aclose()
+            await ctx["http"].aclose()
+            await engine.dispose()
+            get_settings.cache_clear()
+
+    asyncio.run(run())
 
 
 def _fresh_ctx(db_url: str) -> tuple[Any, dict[str, Any]]:
@@ -119,7 +148,7 @@ def test_seen_at_is_taken_before_the_http_call(db_url: str, monkeypatch: Any) ->
     calls = 0
 
     async def fake_fetch(
-        client: Any, source: str, org: str, company: str, region: str | None = None
+        client: Any, source: str, org: str, company: str, region: str | None = None, queries: Any = None
     ) -> BoardFetch:
         nonlocal calls
         calls += 1

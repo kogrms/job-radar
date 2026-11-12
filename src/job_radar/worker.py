@@ -2,20 +2,25 @@
 
 import logging
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, ClassVar
 
 from arq import cron
 from arq.connections import RedisSettings
+from sqlalchemy import select
 
 from job_radar.boards import load_boards
 from job_radar.collectors import fetch_board
 from job_radar.collectors.base import make_client
 from job_radar.config import get_settings
 from job_radar.db import make_engine, make_sessionmaker
+from job_radar.models import Board
 from job_radar.store import apply_fetch
 
 log = logging.getLogger(__name__)
+
+# Sources whose data changes slower than the 6-hour cron: poll at most this often.
+MIN_INTERVAL = {"himalayas": timedelta(hours=20)}
 
 
 async def ping(ctx: dict[str, Any]) -> str:
@@ -23,11 +28,16 @@ async def ping(ctx: dict[str, Any]) -> str:
 
 
 async def collect_board(
-    ctx: dict[str, Any], source: str, org: str, company: str, region: str | None = None
+    ctx: dict[str, Any],
+    source: str,
+    org: str,
+    company: str,
+    region: str | None = None,
+    queries: list[str] | None = None,
 ) -> dict[str, Any]:
     """Fetch one board and apply it. A failed fetch never reaches storage, so it cannot close anything."""
     seen_at = datetime.now(UTC)  # fetch START time: the stale guard in apply_fetch relies on it
-    fetched = await fetch_board(ctx["http"], source, org, company, region)
+    fetched = await fetch_board(ctx["http"], source, org, company, region, queries)
     if fetched.error:
         log.warning("fetch %s/%s failed: %s", source, org, fetched.error)
         return {"outcome": "failed", "error": fetched.error}
@@ -48,15 +58,25 @@ async def collect_all(ctx: dict[str, Any]) -> int:
     if path is None:
         log.warning("BOARDS_FILE is not set, nothing to collect")
         return 0
-    slot = datetime.now(UTC).strftime("%Y%m%d%H")
+    now = datetime.now(UTC)
+    slot = now.strftime("%Y%m%d%H")
+    async with ctx["sessionmaker"]() as session:
+        rows = (await session.execute(select(Board.source, Board.org, Board.last_fetch_at))).all()
+    last = {(s, o): at for s, o, at in rows}
     queued = 0
     for b in load_boards(path):
+        at = last.get((b.source, b.org))
+        if b.source in MIN_INTERVAL and at is not None and now - at < MIN_INTERVAL[b.source]:
+            continue  # e.g. Himalayas refreshes daily: polling it every 6 hours only adds load
         job = await ctx["redis"].enqueue_job(
             "collect_board",
             b.source,
             b.org,
             b.company,
             b.region,
+            # Keyword and only when set: ATS jobs keep the old argument shape, so a worker that has not been
+            # rebuilt yet can still run them.
+            **({"queries": b.queries} if b.queries else {}),
             _job_id=f"collect:{b.source}:{b.org}:{slot}",
         )
         queued += job is not None  # arq returns None when a job with this id already exists

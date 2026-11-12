@@ -47,3 +47,11 @@ Format: project — what — repro — status / link.
   the text. Caught by a test before any real data was stored.
 - **Greenhouse `meta.total`** gives the board's own count — a cheap completeness check other APIs lack.
 - **Lever** EU sites are on `api.eu.lever.co` (verified, unlike the Greenhouse claim above).
+
+## Himalayas API (PR 3b, checked live 2026-11-11)
+
+- **`totalCount` is 0-2 above the jobs the search actually returns** even when every page is read to an empty one
+  with no duplicates (python 638/636, typescript 229/227). Probably expired or hidden jobs counted. Our completeness
+  rule tolerates max(3, 2%).
+- `country=RS` includes worldwide roles; `locationRestrictions: []` means no restriction listed.
+- Search pages are 20 jobs; responses are cached by Cloudflare (`s-maxage=3600`), so re-reads within an hour are free.

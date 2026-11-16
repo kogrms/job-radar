@@ -5,6 +5,24 @@ Raw material for the "how I work with coding agents" interview story.
 
 Format: date — what happened — how it was caught — fix — rule going forward.
 
+## Review scoreboard
+
+One row per independent review; counts from the review tables below. **Escaped** = a defect found later in
+code that this review had passed (live run, owner, a later review). It is the number that says where review
+is weak: an area that keeps escaping gets its own reviewer lens. Pre-review catches (tests, live runs before
+the review) are not escapes.
+
+| Date | PR | Reviewer | Findings | Real bugs | Test gaps | Design / NIT | False alarms | Escaped later |
+|---|---|---|---|---|---|---|---|---|
+| 2026-11-11 | 2 storage | Sonnet 5.5 | 11 | 3 | 4 | 4 | 0 | 0 known |
+| 2026-11-11 | 3 ATS collectors | Sonnet 5.5 | 10 | 3 | 3 | 4 | 0 | 0 known |
+| 2026-11-11 | 3b Himalayas | Sonnet 5.5 | 9 | 4 | 4 | 1 | 0 | 0 known |
+| 2026-11-16 | 5 eligibility rules | Sonnet 5.5 | 13 | 9 | 1 | 3 | 0 | 0 known |
+
+Caveat: "0 known" escapes because nobody was looking until 2026-11-16. From now on every later-found defect in
+reviewed code is logged here against the review that passed it. All four reviews used one model family, the
+implementer's (docs/tasks/0002).
+
 ## 2026-11-05 — import re-ran a destructive script
 
 - **What:** to reuse a helper (`jsonld_job`), the agent ran `from fix_jd import jsonld_job`. `fix_jd.py` had no

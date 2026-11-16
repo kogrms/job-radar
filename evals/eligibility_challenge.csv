@@ -77,10 +77,10 @@ id,text,label,rules_answer,why
 76,Anywhere but Russia,yes,,location exclusion of Russia does not apply
 77,Anywhere (no Russia),yes,,location exclusion of Russia does not apply
 78,Anywhere except Belarus,yes,,owner is not Belarusian or in Belarus
-79,Remote (Global); we cannot hire from Russia or Belarus,yes,,location exclusion; global
-80,Remote; не берут из РФ и РБ,unclear,,location exclusion; bare remote
-81,Candidates from Russia are not accepted,unclear,,"location exclusion, nothing else"
-82,Кандидаты из России не рассматриваются,unclear,,"location exclusion, nothing else"
+79,Remote (Global); we cannot hire from Russia or Belarus,unclear,,"people ""from Russia"" excluded: may be citizenship (owner, 2026-11-16)"
+80,Remote; не берут из РФ и РБ,unclear,,"people ""from Russia"" excluded: may be citizenship"
+81,Candidates from Russia are not accepted,unclear,,"people ""from Russia"" excluded: may be citizenship"
+82,Кандидаты из России не рассматриваются,unclear,,"people ""from Russia"" excluded: may be citizenship"
 83,We consider candidates from Russia and other countries,yes,,Russia welcome
 84,Рассматриваем кандидатов из России,yes,,Russia welcome
 85,Russian nationals are not eligible,no,,nationality exclusion
@@ -99,3 +99,6 @@ id,text,label,rules_answer,why
 98,Relocation support in case of international mobility,unclear,no,not a location statement
 99,Remote; relocation possible,unclear,,remote offered alongside relocation; no geography
 100,"Relocation possible, or work remotely",unclear,,"remote (as ""remotely"") offered alongside relocation"
+101,Worldwide; we cannot hire from Belarus,yes,,Belarus-only exclusion does not apply
+102,Belgrade office; candidates from Russia are not accepted,unclear,,"Serbia named, but people from Russia excluded"
+103,All countries except Russia and Belarus,yes,,Russia excluded from a place list

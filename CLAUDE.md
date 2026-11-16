@@ -78,7 +78,11 @@ A trimmed agentic workflow: keep the checkpoints that catch bugs, drop team-only
    eval harness. The reviewer is a separate read-only session, preferably a different model. It gets the diff and the
    spec, not the implementer's reasoning. Findings go back to the implementer until resolved.
    The reviewer is defined in `.claude/agents/pr-reviewer.md` (Sonnet; no Edit/Write tools).
-   Record every finding in `agent-log.md` with a verdict: real bug / style / false alarm.
+   The agent file holds only the role, rules and report format. The review request is written per PR by the
+   orchestrating session: the risks specific to this PR (from the spec, `decisions.md` and where the code
+   departs from the spec), what is frozen, what to verify by running. No generic checklists.
+   Record every finding in `agent-log.md` with a verdict: real bug / style / false alarm, and add a row to the
+   review scoreboard there. A defect found later in reviewed code is logged as an escape against that review.
 4. **Human checkpoint before merge, always.** The owner reads the diff itself for core code (state, queue,
    classifier, evals), not a summary of it. The owner must be able to explain every line there in an interview.
 5. **Turn mistakes into rules.** When the agent's mistake is caught, add the rule to this file (Rules section)

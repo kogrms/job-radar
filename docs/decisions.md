@@ -205,7 +205,8 @@ Rules frozen (sha256 `3ae7d1a7…`, same as at sampling and in commit d59da27), 
   sanctions on payments into Russia), not about citizenship; the owner lives in Serbia. Teams may even be
   Russian-speaking. Only an explicit exclusion of Russian *nationals / citizens / passport holders* is `no`.
 - Belarus exclusions never apply (the owner is neither Belarusian nor in Belarus).
-- **Open:** row 169 of the 191 set ("Remote (Global); B2B via an EOR platform; не берут из РФ/РБ", paraphrased) was labeled `no` before
+- **Refined the same day (see next entries):** excluding *people from* Russia is not the same as excluding a place.
+- **Was open:** row 169 of the 191 set ("Remote (Global); B2B via an EOR platform; не берут из РФ/РБ", paraphrased) was labeled `no` before
   this ruling; by the ruling it is `yes`. Label left as is until the owner confirms.
 
 ## 2026-11-16 — rules v2 after the independent review, and a challenge set
@@ -231,3 +232,16 @@ Rules frozen (sha256 `3ae7d1a7…`, same as at sampling and in commit d59da27), 
   number is still v1 on the held-out 60; the next fresh batch (docs/tasks/0004) measures v2.
 - **v2 known misses** (pinned): "relocation to London or Dubai" as an option next to full remote → `no`
   (docs/tasks/0003); "global"/CET next to a US-only restriction → `unclear` instead of `no` (safe direction).
+
+## 2026-11-16 — refinement: "people from Russia" excluded is unclear, not yes
+
+- **Owner's ruling:** "не берут из РФ/РБ", "cannot hire from Russia", "candidates from Russia are not accepted"
+  may be about citizenship, not location, so → `unclear`. Russia excluded from a *list of places* ("worldwide
+  except Russia") stays a non-issue (→ judged by the rest of the text). An exclusion of Russian
+  *nationals / citizens* stays `no`. A Belarus-only exclusion never applies.
+- Row 169 of the 191 set relabeled `no` → `unclear` (owner, 2026-11-16).
+- **Rules:** new rule 2 `russia_people_excluded` → unclear, before Serbia is checked (the citizenship doubt holds
+  even for a Belgrade office). Two strip patterns turned out to be dead code (Russia and Belarus are not in the
+  place list, so leaving "except Russia" in the text changes nothing) — found by surviving mutants, deleted.
+- **Numbers:** 191 set 91.1% (1 wasted, 4 dropped, 45 to a human; row 169 now agrees); held-out 60 unchanged;
+  challenge set 103 rows, 92.2% (0 wasted, 1 dropped). 49 mutants, 0 survive.

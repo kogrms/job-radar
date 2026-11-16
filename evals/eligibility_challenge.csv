@@ -1,0 +1,101 @@
+id,text,label,rules_answer,why
+1,Remote (UTC-3 to UTC+3),yes,,tz band covers +1/+2
+2,UTC –1 to UTC +1,yes,,en dash as minus (crashed in v1)
+3,UTC‑1 to UTC+1,yes,,non-breaking hyphen as minus (crashed in v1)
+4,UTC−3 to UTC+3,yes,,U+2212 minus sign
+5,UTC+2 to UTC+5,yes,,band covers +2 only
+6,UTC-3 to UTC+1,yes,,band covers +1 only
+7,UTC+3 to UTC-1,yes,,band written high to low
+8,UTC-8 to UTC-5; or UTC+1 to UTC+3,yes,,second band covers Serbia
+9,UTC+5:30 to UTC+8,no,,band east of Serbia
+10,"Remote, GMT-8 to GMT-4 only",no,,band west of Serbia
+11,"Remote, CET working hours",yes,,named time zone
+12,"Remote, EET hours",yes,,named time zone
+13,"Remote, EMEA time zones",yes,,named time zone
+14,"Remote, EU timezones",yes,,"EU time zones, not the EU bloc"
+15,Fully remote based in Americas or European timezones,yes,,either region's time zones
+16,"Remote (US), CET overlap",no,unclear,CET is hours overlap; location is the US
+17,"Remote, US only; overlap with CET required",no,unclear,US only
+18,Remote - European Union,no,,EU bloc
+19,Remote within the EEA,no,,EEA bloc
+20,"Удалённо, только еврозона",no,,eurozone
+21,"Remote, Schengen area",no,,Schengen
+22,Remote Europe (non-EU),unclear,,"region only, EU negated"
+23,"Remote, outside the EU",unclear,,"EU negated, nothing else"
+24,Remote - Europe (excluding EU),unclear,,"region only, EU negated"
+25,Remote - not US,unclear,,"US negated, nothing else"
+26,"Remote, work with us",unclear,,'us' is a pronoun
+27,Remote,unclear,,bare remote
+28,,unclear,,empty
+29,Remote - EMEA,unclear,,region only
+30,Remote (North America),no,,other region
+31,Remote - APJ,no,,other region
+32,Remote; Bulgaria; Poland; United Kingdom,no,,countries without Serbia
+33,"Remote, USA",no,,US
+34,U.S. only,no,,US with dots
+35,Ptuj office,no,,"city, not Serbia"
+36,Anywhere in the US,no,,'anywhere in X' restricts to X
+37,Anywhere in the EU,no,,'anywhere in X' restricts to X
+38,Work from anywhere in the UK,no,,'anywhere in X' restricts to X
+39,Remote - anywhere in North America,no,,'anywhere in X' restricts to X
+40,"Global team, US only",no,unclear,'global' describes the team
+41,"Global Remote, US-based",no,unclear,US-based
+42,"Our global offices: London, Berlin",no,unclear,"offices, not a hiring area"
+43,Not worldwide,unclear,,worldwide negated
+44,Remote; not global,unclear,,global negated
+45,Remote — Anywhere in the world,yes,,worldwide
+46,We hire globally,yes,,worldwide
+47,Work from anywhere,yes,,worldwide
+48,"Remote, any country",yes,,worldwide
+49,All countries welcome,yes,,worldwide
+50,Работа из любой точки мира,yes,,worldwide
+51,"Удалённо, работаем по миру",yes,,worldwide
+52,Remote anywhere; overlap with US Central Time required,yes,,worldwide; hours overlap only
+53,"Remote worldwide, offices in London",yes,,worldwide; office location only
+54,"Remote worldwide, no Serbian language required",yes,,"Serbian language, not Serbia"
+55,"Belgrade, Serbia — hybrid",yes,,Serbia named
+56,Список стран включает Сербию и Грузию,yes,,Serbia named (case form)
+57,Remote (Rad od kuće),yes,,Serbian job board phrase
+58,"Remote; Belgrade, Novi Sad, Yerevan",yes,,Belgrade named
+59,"Сербский язык, Remote, US",no,,"Serbian language, location US"
+60,"Remote, not in Serbia",no,,Serbia negated
+61,cannot hire in Serbia,no,,Serbia negated
+62,Serbia is not supported,no,,Serbia negated
+63,Serbia excluded,no,,Serbia negated
+64,All countries except Serbia,no,,Serbia negated
+65,"Remote, without Serbia",no,,Serbia negated
+66,"Удалённо, без Сербии",no,,Serbia negated
+67,В списке стран Сербии нет,no,,Serbia negated
+68,Office hub in Bulgaria — not Serbia,no,,Serbia negated
+69,"Hybrid, 3 days in our Novi Sad office",no,,Novi Sad commute
+70,Novi-Sad office,no,,Novi Sad commute
+71,"Kraljevo office, on-site",no,,Kraljevo commute
+72,Офис в Кралево,no,,Kraljevo commute
+73,Офис в Нови Саде или удалённо,unclear,,"remote alternative, no geography"
+74,Офис в Нови Саде или удаленно,unclear,,remote alternative (е spelling)
+75,Worldwide except Russia,yes,,"location exclusion of Russia does not apply (owner, 2026-11-16)"
+76,Anywhere but Russia,yes,,location exclusion of Russia does not apply
+77,Anywhere (no Russia),yes,,location exclusion of Russia does not apply
+78,Anywhere except Belarus,yes,,owner is not Belarusian or in Belarus
+79,Remote (Global); we cannot hire from Russia or Belarus,yes,,location exclusion; global
+80,Remote; не берут из РФ и РБ,unclear,,location exclusion; bare remote
+81,Candidates from Russia are not accepted,unclear,,"location exclusion, nothing else"
+82,Кандидаты из России не рассматриваются,unclear,,"location exclusion, nothing else"
+83,We consider candidates from Russia and other countries,yes,,Russia welcome
+84,Рассматриваем кандидатов из России,yes,,Russia welcome
+85,Russian nationals are not eligible,no,,nationality exclusion
+86,We cannot hire Russian citizens; remote worldwide,no,,nationality exclusion
+87,Не рассматриваем граждан РФ,no,,nationality exclusion
+88,Visas are not issued to Belarusian and Russian nationals,no,,nationality exclusion
+89,"We are currently unable to offer remote work, visa sponsorship or relocation",no,,no remote
+90,"Не удалёнка, офис",no,,no remote
+91,Remote work available: No,no,,no remote
+92,Relocation package to our Lisbon hub,no,,relocation instead of remote
+93,Hybrid; no relocation assistance,unclear,,no relocation says nothing about location
+94,"Relocation not required, remote",unclear,,bare remote
+95,Remote. No relocation offered,unclear,,bare remote
+96,Relocation to Berlin or work remotely,unclear,no,"remote alternative, no geography"
+97,"100% remote, or sponsored relocation to London or Dubai",yes,no,fully remote; cities are optional relocation targets (owner labeled a real case yes)
+98,Relocation support in case of international mobility,unclear,no,not a location statement
+99,Remote; relocation possible,unclear,,remote offered alongside relocation; no geography
+100,"Relocation possible, or work remotely",unclear,,"remote (as ""remotely"") offered alongside relocation"

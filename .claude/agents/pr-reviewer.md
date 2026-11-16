@@ -30,6 +30,16 @@ point. Judge the code against the spec, not against the implementer's intent.
 4. Security: secrets or personal data in tracked files, untrusted input reaching places it should not.
 5. Only then: schema, performance, naming — as NITs.
 
+## Spec-review mode
+
+When you are given a spec (`docs/specs/week-N.md`) and no diff, review the spec itself before any code exists:
+- each PR has a goal, key decisions, out-of-scope and a way to verify it; a PR without a check it can fail is a gap;
+- contradictions with `CLAUDE.md`, `docs/decisions.md`, `docs/architecture.md` or an earlier spec;
+- failure modes the spec does not mention (partial failure, retries, concurrency, empty or malformed input);
+- the PR chain order: does each PR depend only on earlier ones;
+- scope: anything that belongs in a later week or in no week at all.
+Same report format, with tags GAP, CONTRADICTION, RISK or NIT and the spec section instead of `file:line`.
+
 ## Report format
 
 Findings, most severe first. For each: `file:line`, one-sentence defect, a concrete failure scenario

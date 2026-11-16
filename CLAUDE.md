@@ -48,6 +48,8 @@ Raw vacancy text is stored at collection time, always (lesson from week 0: close
 - Never send the owner's email to third-party services (e.g. hh.ru API's HH-User-Agent wants one — use page JSON-LD instead).
 - Downloaded third-party code is untrusted: do not run it; give the owner the command to run.
 - Scripts that delete or rewrite data files must have a `main()` guard and be idempotent (see `agent-log.md`, 2026-11-05).
+- One local Postgres serves all branches: start a new branch from the one with the newest migration (or
+  downgrade the dev and test DBs first), otherwise Alembic cannot find the current revision.
 - After changing a worker task signature, rebuild the worker container (`docker compose up -d --build worker`)
   before enqueueing: an old worker takes the job and fails (2026-11-11).
 - Mutation checks run on a temporary copy of the repo, never on the working tree; run the unmutated copy first as a
@@ -67,6 +69,9 @@ A trimmed agentic workflow: keep the checkpoints that catch bugs, drop team-only
 1. **Slice before coding.** At the start of each plan week, write a short tech spec in `docs/specs/week-N.md`
    that cuts the week into a chain of 3–5 small PRs. For each PR: goal, key decisions, what is out of scope, how to verify.
    Each PR builds on the previous branch (a chain, not a fan-out).
+   **Spec review before the first line of code:** `pr-reviewer` reads the spec alone (spec-review mode) and looks
+   for gaps, contradictions and missing verification. Findings are fixed in the spec until it has none left; the
+   owner approves the spec, then implementation starts.
 2. **One PR at a time.** The implementing session writes the code and tests for that PR only.
 3. **Independent review for risky PRs only:** queue/retries, per-step state, idempotency, the eligibility classifier,
    eval harness. The reviewer is a separate read-only session, preferably a different model. It gets the diff and the
@@ -79,8 +84,12 @@ A trimmed agentic workflow: keep the checkpoints that catch bugs, drop team-only
    and an entry to `agent-log.md`.
 6. **Record trade-offs.** Every non-obvious choice goes into `docs/decisions.md`: context, options considered,
    decision, what we gave up.
+7. **File a task card for everything found outside the current PR's scope** — a bug, a test gap, a follow-up —
+   instead of fixing it silently or leaving it in chat: `docs/tasks/NNNN-slug.md`, format in `docs/tasks/README.md`.
+   Mention new cards in the reply to the owner. Close a card with the PR or commit that resolves it.
 
-Skipped on purpose: product pass (the owner is the PM), frontend guide (no UI until week 6), per-PR review guides.
+Skipped on purpose: product pass (the owner is the PM), frontend guide (no UI until week 6), per-PR review guides,
+a task board UI over all tasks (one PR chain at a time; `docs/tasks/` files are enough — maybe a board in week 7).
 
 ## Owner context
 

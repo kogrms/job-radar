@@ -122,3 +122,49 @@ Non-obvious choices with the alternatives we rejected. Format: context — optio
 - `last_fetch_at` moves on incomplete fetches too, so after an incomplete Himalayas fetch the next try is ~a day
   later (MIN_INTERVAL 20 h + 6 h cron). Accepted: nothing is lost, closures are just delayed. A separate
   "last complete fetch" column would fix it if it ever matters.
+
+## 2026-11-12 — rule-based eligibility baseline: the number an LLM has to beat
+
+- **Context:** no LLM key yet; the 191 hand-labeled location wordings exist. A transparent baseline makes the
+  later LLM claim measurable ("rules give X, the model gives Y at cost Z").
+- **Rules:** `src/job_radar/eligibility/rules.py`, written from the labeling rules above (2026-11-11), first match
+  wins. Evaluation: `scripts/eval_eligibility.py` (reads the private CSV).
+- **Results (all 191 / verbatim quotes only, 119):**
+  - first run, before looking at errors: accuracy 90.6% / —; fitting jobs dropped (gold yes → no) 5; wasted
+    applications (gold no → yes) 1; sent to a human 42.
+  - after three general fixes (Russian case forms of "Serbia"; relocation is "no" only when remote is not
+    offered; dropped two over-broad patterns of my own: "international", "time zones close to Europe"):
+    accuracy 91.1% / 93.3%; dropped 4 / 2; wasted 1 / 1; sent to a human 44 / 35.
+- **Caveat — these numbers are optimistic.** The rules were written by someone who had seen all 191 rows, and the
+  first-run errors were looked at before the fixes. This is in-sample. A fair number needs wordings nobody has
+  seen: a fresh held-out set from the live database (ATS + Himalayas `location_raw`), labeled before any rule or
+  prompt is tuned on it.
+- **Known limitation, kept as an xfail test:** "100% remote, or relocation to London or Dubai" → "no", because the
+  cities read as the allowed locations. Context like this is where an LLM should win.
+- **Paraphrased rows** carry the owner's notes ("not stated whether Serbia is ok"), which trigger the Serbia rule;
+  that is why the verbatim-only number is reported separately.
+
+## 2026-11-16 — held-out eligibility set from the live database
+
+- **Why:** the 2026-11-12 baseline numbers are in-sample. A fair number needs wordings neither the owner nor the
+  rules author had seen, labeled before anything is tuned on them.
+- **Sampling** (`scripts/sample_heldout.py`, seed 20261112): distinct `location_raw` strings of open vacancies,
+  minus wordings already in the 191-row set; 15 from Himalayas, 45 from ATS boards split by each source's count of
+  distinct wordings (ashby 22, greenhouse 14, lever 8, workable 1). Each row keeps `n_postings`, so results can be
+  reported per wording and per posting.
+- **Freeze:** the sha256 of `rules.py` at sampling time is stored next to the private CSV. The rules are not edited
+  until the held-out number is computed; any later fix gets its own run and is reported as such.
+- **Known gap:** see `docs/tasks/0004` — two Himalayas groups did not make it into the random sample.
+- **Different input shape:** live ATS strings are structured fields ("Berlin; Hybrid; Remote"), not quotes from
+  the vacancy text like most of the 191. A drop in accuracy here partly measures that shift, not only overfitting.
+
+## 2026-11-16 — task cards as files, no task board
+
+- **Context:** another team's agentic workflow adds an orchestration layer over all tasks (a board; agents file
+  new cards for bugs they find). The useful part for us is "a found bug becomes a card, not a chat message".
+- **Options:** a board UI over the task list; an issue tracker (GitHub Issues); markdown files in the repo.
+- **Decision:** `docs/tasks/NNNN-slug.md` with a status header. One PR chain runs at a time, so a board would show
+  one column of cards. Files are read by the agent with no API, are versioned with the code, and work offline.
+- **Gave up:** a visual overview and cross-task orchestration. Revisit in week 7 if time is left.
+- Same day: spec review before code was added to the workflow (step 1 in `CLAUDE.md`, spec-review mode of
+  `pr-reviewer`).

@@ -162,3 +162,11 @@ The reviewer's own first mutation run was invalid (its copy imported the real re
 | 9 | One malformed job raised out of the task; page delay untested | Real, minor | Fails the fetch cleanly; delay test |
 
 False alarms: none. After fixes: 90 tests; eight mutants (on a temp copy, baseline first), each caught.
+
+## 2026-11-12 — branch from main could not run tests: the shared DB was migrated by another branch
+
+- **What:** the eligibility branch started from `main`, but the dev and test databases were already at the
+  Himalayas migration from `pr3b-himalayas`. Alembic: "No such revision '6ba46df4d571'"; 10 test errors.
+- **Fix:** rebased the uncommitted work onto `pr3b-himalayas` (which merges first anyway).
+- **Rule:** one local Postgres serves every branch. Start a new branch from the branch with the newest migration,
+  or downgrade both DBs before switching.

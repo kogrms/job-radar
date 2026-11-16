@@ -43,9 +43,13 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
 
+[tool.ruff.lint.per-file-ignores]
+# Cyrillic in the location patterns is intentional (Russian-language postings and notes).
+"src/job_radar/eligibility/rules.py" = ["RUF001"]
+
 [tool.mypy]
 strict = true
-files = ["src"]
+files = ["src", "scripts"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]

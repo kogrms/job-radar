@@ -2,22 +2,34 @@
 take this job, judging by the location wording alone?
 
 Answers yes / no / unclear. "unclear" is a real answer: it routes the vacancy to a human. The rules encode the
-labeling rules in docs/decisions.md (2026-11-11), in this order — the first rule that fires wins:
+labeling rules in docs/decisions.md (2026-11-11, refined 2026-11-16).
 
-1. Russia explicitly excluded                       -> no
-2. Serbia explicitly negated ("not Serbia")         -> no
+First, phrases that only look like restrictions are removed, so later rules do not misread them:
+- an exclusion of Russia or Belarus *as a location* ("worldwide except Russia", "candidates from Russia are
+  not accepted"): the owner lives in Serbia, so it does not apply to him (owner's ruling, 2026-11-16);
+- a negated bloc or country ("non-EU", "outside the EU", "not US"), a negated "worldwide" ("not global"), and
+  "anywhere in <somewhere>" (that is a restriction to <somewhere>, not "anywhere");
+- "no relocation (assistance)" / "relocation not required" (says nothing about where one may work).
+
+Then, in this order — the first rule that fires wins:
+1. Russian nationals / citizens excluded              -> no
+2. Serbia explicitly negated ("not in Serbia", "Serbia excluded") -> no
 3. Novi Sad / Kraljevo office without Belgrade or remote -> no (owner's commute constraint)
 4. Serbia / Belgrade named, or a Serbian job board phrase -> yes
 5. Russian candidates explicitly welcome            -> yes
-6. Worldwide / anywhere / global                    -> yes
+6. Worldwide / anywhere / global                    -> yes; "global" with other geography named -> unclear
+   ("global" often describes the company, not the hiring area: "Global team, US only")
 7. Time-zone band that covers Serbia (UTC+1/+2)     -> yes; a band that does not -> no
-8. EU / EEA / eurozone (legal blocs Serbia is not in) -> no
-9. "No remote / no visa / no relocation" statements  -> no
-10. Relocation to another country, remote not offered -> no
-11. Region only (Europe, EMEA)                       -> unclear
-12. Other regions (Americas, APAC, LATAM)            -> no
-13. Named countries or cities, none of them Serbian  -> no
-14. Anything else (bare "Remote", nothing usable)    -> unclear
+8. Named time zones that cover Serbia (CET, EU time zones) -> yes
+   Rules 7-8 give unclear when a country or city is named too ("Remote (US), CET overlap": hours, not
+   location).
+9. EU / EEA / eurozone (legal blocs Serbia is not in) -> no
+10. "No remote / no visa / no relocation" statements -> no
+11. Relocation to another country, remote not offered -> no
+12. Region only (Europe, EMEA)                       -> unclear
+13. Other regions (Americas, APAC, LATAM)            -> no
+14. Named countries or cities, none of them Serbian  -> no
+15. Anything else (bare "Remote", nothing usable)    -> unclear
 
 This is the baseline an LLM classifier has to beat; it is deliberately simple and readable.
 """
@@ -40,20 +52,53 @@ def _rx(*alternatives: str) -> re.Pattern[str]:
     return re.compile("|".join(f"(?:{a})" for a in alternatives), re.IGNORECASE)
 
 
-RUSSIA_EXCLUDED = _rx(
-    r"(?:не\s+берут|не\s+рассматрива\w*|кроме|except(?:ing)?|exclud\w*|not\s+(?:accept|consider|hire)\w*)"
-    r"[^.;]{0,40}(?:\bрф\b|росси\w*|russia\w*|belarus\w*|\bрб\b)",
-    r"(?:russian|belarusian)\s+nationals[^.;]{0,80}(?:not|no)\b",
-    r"\bnot\b[^.;]{0,60}(?:russian|belarusian)\s+nationals",
+# --- phrases removed before the rules run ---
+
+_RU = r"(?:\bрф\b|\bросси[яиюей]\b|\brussia\b|\bbelarus\b|\bбеларус\w*|\bрб\b)"
+_RU_LIST = rf"{_RU}(?:\s*(?:/|,|\band\b|\bor\b|\bи\b|\bили\b)\s*{_RU})*"
+RUSSIA_LOCATION_EXCLUDED = _rx(
+    rf"(?:не\s+берут|не\s+рассматрива\w*|не\s+нанима\w*|кроме|except(?:ing)?|exclud\w*"
+    rf"|not\s+(?:accept|consider|hire)\w*|cannot\s+hire|can't\s+hire)[^.;]{{0,40}}?{_RU_LIST}",
+    rf"(?:\bиз|\bfrom)\s+{_RU_LIST}[^.;]{{0,30}}?(?:\bnot\b|\bне\s|\bineligible\b)",
 )
+NEGATED_GEO = _rx(
+    r"(?:\bnon|\bnot|\boutside(?:\s+of)?(?:\s+the)?|\bexcluding|\bexcept|\bno)[\s-]+(?:the\s+)?"
+    r"(?:eu|european\s+union|eea|us|usa|u\.s\.|uk)\b",
+    r"\b(?:not|no|non)[\s-]+(?:available\s+)?(?:world\s*wide|global(?:ly)?|anywhere)\b",
+    r"\banywhere\s+in\s+(?!the\s+world)",
+)
+NEGATED_RELOCATION = _rx(
+    r"\bno\s+relocation\w*(?:\s+(?:assistance|support|package|needed|required))?",
+    r"\brelocation\s+(?:is\s+)?not\s+(?:required|needed|necessary)",
+    r"без\s+релокац\w*",
+)
+
+# --- rules ---
+
+_RU_NATIONALS = (
+    r"(?:russian\s+(?:nationals|citizens|passport\s+holders|passports?)|граждан\w*\s+(?:рф|росси\w*))"
+)
+RUSSIAN_NATIONALS_EXCLUDED = _rx(
+    rf"{_RU_NATIONALS}[^.;]{{0,80}}?\b(?:not|no|cannot|unable|ineligible|не)\b",
+    rf"\b(?:not|no|cannot|unable|except(?:ing)?|exclud\w*|не|кроме)\b[^.;]{{0,80}}?{_RU_NATIONALS}",
+)
+_SERBIA_WORD = r"(?:serbia|сербии|сербия|сербию)\b"
 SERBIA_NEGATED = _rx(
-    r"(?:\bне|\bnot|\bno|\bбез|\bwithout)\W{0,3}(?:serbia|сербии|сербия)",
-    r"(?:сербии|serbia)\s+(?:нет|not\b)",
+    rf"(?:\bне|\bnot|\bno|\bбез|\bwithout|\bexcept(?:ing)?|\bexclud\w*|\bкроме|\bcannot\s+hire|\bcan't\s+hire"
+    rf"|\bunable\s+to\s+hire)\W{{1,3}}(?:(?:in|from|the|в|из)\W{{1,3}})?{_SERBIA_WORD}",
+    rf"{_SERBIA_WORD}\s+(?:is\s+|are\s+)?(?:not\s+(?:supported|eligible|included|available|possible)|excluded"
+    rf"|нет\b|не\s+(?:подходит|рассматрива\w*))",
 )
-NOVI_SAD = _rx(r"novi\s*sad", r"нови[\s-]*сад\w*", r"kraljevo", r"кралево")
-BELGRADE_OR_REMOTE = _rx(r"belgrade", r"beograd", r"белград\w*", r"remote", r"удал[её]н\w*")
+NOVI_SAD = _rx(r"novi[\s-]*sad", r"нови[\s-]*сад\w*", r"kraljevo", r"кралево")
+BELGRADE_OR_REMOTE = _rx(r"belgrade", r"beograd", r"белград\w*", r"\bremote", r"удал[её]н\w*")
 SERBIA = _rx(
-    r"\bserbia\b", r"srbija", r"серби[яиюей]\b", r"сербск\w*", r"belgrade", r"beograd", r"белград\w*"
+    r"\bserbia\b",
+    r"srbija",
+    r"серби[яиюей]\b",
+    r"\bсербск\w*\b(?!\s+язык)",
+    r"belgrade",
+    r"beograd",
+    r"белград\w*",
 )
 SERBIAN_BOARD = _rx(r"rad od ku[cć]e")
 RUSSIA_WELCOME = _rx(r"(?:кандидат\w*|candidates?|applicants?)\s+(?:из|from)\s+(?:росси\w*|russia)")
@@ -65,10 +110,11 @@ WORLDWIDE = _rx(
     r"any\s+country",
     r"любой\s+точки\s+мира",
     r"\bпо\s+миру\b",
-    r"from\s+anywhere",
 )
+_SIGN = r"[+\-−–‑]"  # plus, ASCII hyphen-minus, minus sign, en dash, non-breaking hyphen
 TZ_RANGE = re.compile(
-    r"(?:utc|gmt)\s*([+-−]\s*\d{1,2})(?::\d\d)?\s*(?:to|до|и|and|-|–|—)\s*(?:utc|gmt)?\s*([+-−]\s*\d{1,2})",
+    rf"(?:utc|gmt)\s*({_SIGN}\s*\d{{1,2}}(?:[.:]\d{{1,2}})?)\s*(?:to|до|и|and|-|–|—)\s*(?:utc|gmt)?\s*"
+    rf"({_SIGN}\s*\d{{1,2}}(?:[.:]\d{{1,2}})?)",
     re.IGNORECASE,
 )
 TZ_COVERS_SERBIA = _rx(
@@ -95,7 +141,7 @@ NO_SUPPORT = _rx(
     r"remote\s+work\s+available:\s*no",
 )
 RELOCATION = _rx(r"relocat\w*", r"релокац\w*", r"переезд\w*")
-REMOTE = _rx(r"\bremote\b", r"удал[её]н\w*", r"work\s+from\s+home")
+REMOTE = _rx(r"\bremote(?:ly)?\b", r"удал[её]н\w*", r"work\s+from\s+home")
 REGION_EUROPE = _rx(r"\beurope\b", r"европ\w*", r"\bemea\b", r"\bcee\b")
 OTHER_REGIONS = _rx(
     r"north\s+america",
@@ -108,13 +154,14 @@ OTHER_REGIONS = _rx(
     r"middle\s+east",
     r"\basia\b",
 )
+# "US" is matched case-sensitively: with IGNORECASE it also matches the pronoun ("work with us").
+US = re.compile(r"\bU\.S\.(?:A\.)?|\bUSA?\b")
 # Countries and cities that occur in job location lines (EN + RU spellings). Serbia is not in this list.
 PLACES = _rx(
     *(
         rf"\b{p}\b"
         for p in [
             r"united\s+states",
-            r"\busa?\b",
             r"united\s+kingdom",
             r"\buk\b",
             r"england",
@@ -243,8 +290,14 @@ PLACES = _rx(
 )
 
 
-def _tz_offset(raw: str) -> int:
-    return int(raw.replace("−", "-").replace(" ", ""))
+def _tz_offset(raw: str) -> float:
+    """'+5:30' -> 5.5, any minus-like sign -> negative. The regex guarantees one sign and digits only."""
+    sign = -1 if raw[0] != "+" else 1
+    hours, _, minutes = raw[1:].strip().replace(".", ":").partition(":")
+    frac = 0.0
+    if minutes:  # "5:30" is half past; "3.5" read as "3:5" means 3.5 hours
+        frac = int(minutes) / 60 if len(minutes) == 2 else int(minutes) / 10
+    return sign * (int(hours) + frac)
 
 
 def _first(pattern: re.Pattern[str], text: str) -> str | None:
@@ -252,12 +305,29 @@ def _first(pattern: re.Pattern[str], text: str) -> str | None:
     return m.group(0) if m else None
 
 
+def _country_or_city(text: str) -> str | None:
+    return _first(US, text) or _first(PLACES, text)
+
+
+def _place(text: str) -> str | None:
+    """Any named geography other than Serbia: a country, city, US, a region or a legal bloc."""
+    return _country_or_city(text) or _first(OTHER_REGIONS, text) or _first(EU_BLOC, text)
+
+
+def _strip(pattern: re.Pattern[str], text: str) -> str:
+    return " ".join(pattern.sub(" ", text).split())
+
+
 def classify(text: str) -> Verdict:
-    t = " ".join(text.split())
-    if not t:
+    original = " ".join(text.split())
+    if not original:
         return Verdict("unclear", "empty")
-    if ev := _first(RUSSIA_EXCLUDED, t):
-        return Verdict("no", "russia_excluded", ev)
+    if ev := _first(RUSSIAN_NATIONALS_EXCLUDED, original):
+        return Verdict("no", "russian_nationals_excluded", ev)
+    t = original
+    for pattern in (RUSSIA_LOCATION_EXCLUDED, NEGATED_GEO, NEGATED_RELOCATION):
+        t = _strip(pattern, t)
+
     if ev := _first(SERBIA_NEGATED, t):
         return Verdict("no", "serbia_negated", ev)
     if (ev := _first(NOVI_SAD, t)) and not BELGRADE_OR_REMOTE.search(t):
@@ -267,25 +337,32 @@ def classify(text: str) -> Verdict:
     if ev := _first(RUSSIA_WELCOME, t):
         return Verdict("yes", "russia_welcome", ev)
     if ev := _first(WORLDWIDE, t):
+        if ev.lower().startswith("global") and (place := _place(t)):
+            return Verdict("unclear", "global_with_places", f"{ev} / {place}")
         return Verdict("yes", "worldwide", ev)
-    if m := TZ_RANGE.search(t):
-        lo, hi = sorted((_tz_offset(m.group(1)), _tz_offset(m.group(2))))
-        covers = lo <= 1 <= hi or lo <= 2 <= hi
-        return Verdict("yes" if covers else "no", "tz_band", m.group(0))
+    if bands := list(TZ_RANGE.finditer(t)):
+        for m in bands:
+            lo, hi = sorted((_tz_offset(m.group(1)), _tz_offset(m.group(2))))
+            if lo <= 1 <= hi or lo <= 2 <= hi:
+                if place := _country_or_city(t):
+                    return Verdict("unclear", "tz_band_with_places", f"{m.group(0)} / {place}")
+                return Verdict("yes", "tz_band", m.group(0))
+        return Verdict("no", "tz_band", bands[0].group(0))
     if ev := _first(TZ_COVERS_SERBIA, t):
+        if place := _country_or_city(t):
+            return Verdict("unclear", "tz_named_with_places", f"{ev} / {place}")
         return Verdict("yes", "tz_named", ev)
     if ev := _first(EU_BLOC, t):
         return Verdict("no", "eu_bloc", ev)
     if ev := _first(NO_SUPPORT, t):
         return Verdict("no", "no_remote_visa_relocation", ev)
     if (ev := _first(RELOCATION, t)) and not REMOTE.search(t):
-        return Verdict(
-            "no", "relocation", ev
-        )  # relocation offered *instead of* remote; "remote or relocate" is fine
+        # relocation offered *instead of* remote; "remote or relocate" is not a no
+        return Verdict("no", "relocation", ev)
     if ev := _first(REGION_EUROPE, t):
         return Verdict("unclear", "region_only", ev)
     if ev := _first(OTHER_REGIONS, t):
         return Verdict("no", "other_region", ev)
-    if ev := _first(PLACES, t):
+    if ev := _country_or_city(t):
         return Verdict("no", "places_without_serbia", ev)
     return Verdict("unclear", "fallback")

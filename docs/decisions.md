@@ -168,3 +168,66 @@ Non-obvious choices with the alternatives we rejected. Format: context — optio
 - **Gave up:** a visual overview and cross-task orchestration. Revisit in week 7 if time is left.
 - Same day: spec review before code was added to the workflow (step 1 in `CLAUDE.md`, spec-review mode of
   `pr-reviewer`).
+
+## 2026-11-16 — held-out result: no costly errors, but 12 of 42 "no" go to a human
+
+Rules frozen (sha256 `3ae7d1a7…`, same as at sampling and in commit d59da27), 60 owner-labeled live wordings
+(16 yes / 42 no / 2 unclear):
+
+| | per wording (60) | per open posting (129) | in-sample, 191 (for contrast) |
+|---|---|---|---|
+| accuracy | 78.3% | 82.9% | 91.1% |
+| fitting job dropped (yes → no) | 0 | 0 | 4 |
+| wasted application (no → yes) | 0 | 0 | 1 |
+| sent to a human | 13 | 22 | 44 |
+
+- **Every miss but one is the safe kind:** a "no" sent to a human (12). Cause: the hand-made place list does not
+  know US states, most cities, and several countries (Texas, Toronto, Kuala Lumpur, Athens, Saudi Arabia, Moscow...),
+  so the rule falls through to "unclear". The rules were built to fail toward a human, and they did.
+- The one other miss: "Global - Remote; São Paulo" → yes (rule `worldwide`), owner says unclear.
+- **Small sample:** 0 costly errors in 60 rows means, by the rule of three, each costly error rate is below ~5%
+  with 95% confidence — not that it is zero.
+  And only for wording shapes the sample contains: the independent review (agent-log, 2026-11-16) built inputs
+  absent from it ("anywhere in the US", "non-EU", "Serbia excluded") and got costly errors from the same rules.
+- Live structured location fields are more decisive than vacancy-text quotes: only 2 of 60 are unclear to the
+  owner (44 of 191 in the old set).
+- Two rows, "Home based - EMEA" combined with "Home Based - Americas" / "Asia Pacific", are labeled "no", while
+  the rules return "unclear" (`region_only`). Owner's ruling (2026-11-16): an ATS location field that lists EMEA
+  without naming Serbia is "no" — the employer hires home-based staff only in countries where it has an entity, and
+  Serbia is rarely one of them. This refines the 2026-11-11 rule "a region alone is unclear" for structured ATS
+  location fields; the 191 old labels (mostly quotes from vacancy text) are left as they were. The rules' miss here
+  is again the safe kind (a human sees it); the fix goes to the LLM classifier's instructions, not to these rules.
+- Any rule fix from here on is evaluated on a new held-out batch (docs/tasks/0004, 0005), not on these 60.
+
+## 2026-11-16 — labeling rule: an exclusion of Russia as a location does not exclude the owner
+
+- **Owner's ruling:** "Worldwide except Russia" is `yes`. Such exclusions are about where a person lives (payroll,
+  sanctions on payments into Russia), not about citizenship; the owner lives in Serbia. Teams may even be
+  Russian-speaking. Only an explicit exclusion of Russian *nationals / citizens / passport holders* is `no`.
+- Belarus exclusions never apply (the owner is neither Belarusian nor in Belarus).
+- **Open:** row 169 of the 191 set ("Remote (Global); B2B via an EOR platform; не берут из РФ/РБ", paraphrased) was labeled `no` before
+  this ruling; by the ruling it is `yes`. Label left as is until the owner confirms.
+
+## 2026-11-16 — rules v2 after the independent review, and a challenge set
+
+- **Unfrozen** after the held-out v1 number was recorded (commit d59da27). v1 numbers stay the honest ones.
+- **What changed:** a crash fix (dash-like minus signs in time zones); phrases that only look like restrictions
+  are removed before the rules run ("non-EU", "not US", "anywhere in X", "not worldwide", "no relocation",
+  Russia/Belarus as a location); "US" case-sensitive; wider Serbia negation; nationality exclusion separated
+  from location exclusion; every time-zone band checked; "global" or named time zones combined with a country →
+  `unclear` (route to a human rather than guess).
+- **Challenge set** `evals/eligibility_challenge.csv` (in the repo, synthetic, no personal data): 100 wordings,
+  most built by the reviewer to break v1, labeled by the labeling rules above. `rules_answer` pins the 8 known
+  misses of v2; the tests run every row, so any change in a rule's behaviour shows up.
+
+| | v1 (frozen) | v2 |
+|---|---|---|
+| challenge set, 100 | 61% · 15 wasted · 6 dropped · 2 crashes | 92% · 0 wasted · 1 dropped · 25 to a human |
+| 191 in-sample | 91.1% · 1 wasted · 4 dropped · 44 to a human | 90.6% · 2 wasted · 4 dropped · 44 (only row 169 changed, see above) |
+| held-out 60 | 78.3% · 0 · 0 · 13 | identical predictions |
+
+- **How to read it:** v2's challenge number is in-sample by construction (v2 was written against those strings).
+  The challenge set is fresh for the LLM classifier; for the rules it is a regression suite. The honest rules
+  number is still v1 on the held-out 60; the next fresh batch (docs/tasks/0004) measures v2.
+- **v2 known misses** (pinned): "relocation to London or Dubai" as an option next to full remote → `no`
+  (docs/tasks/0003); "global"/CET next to a US-only restriction → `unclear` instead of `no` (safe direction).

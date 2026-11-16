@@ -15,7 +15,7 @@ import csv
 import hashlib
 import random
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -52,6 +52,10 @@ async def _wordings(database_url: str) -> dict[str, dict[str, int]]:
 def _allocate(sizes: dict[str, int], total: int) -> dict[str, int]:
     """Largest-remainder split of `total` across sources in proportion to `sizes`."""
     whole = sum(sizes.values())
+    if not 0 <= total <= whole:
+        raise ValueError(f"cannot take {total} from pools of {whole} wordings in total")
+    if total == 0:
+        return {s: 0 for s in sizes}
     exact = {s: total * n / whole for s, n in sizes.items()}
     alloc = {s: int(x) for s, x in exact.items()}
     for s in sorted(exact, key=lambda s: exact[s] - alloc[s], reverse=True)[: total - sum(alloc.values())]:
@@ -59,44 +63,74 @@ def _allocate(sizes: dict[str, int], total: int) -> dict[str, int]:
     return alloc
 
 
+def _dedupe(by_source: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
+    """One wording seen on several sources is kept once, under the source with most postings; its posting
+    count is the total, so per-posting weighting stays right."""
+    best: dict[str, tuple[int, str, str]] = {}  # norm -> (postings on best source, source, text)
+    totals: Counter[str] = Counter()
+    for source, texts in sorted(by_source.items()):
+        for text, n in texts.items():
+            key = _norm(text)
+            totals[key] += n
+            if key not in best or n > best[key][0]:
+                best[key] = (n, source, text)
+    out: dict[str, dict[str, int]] = defaultdict(dict)
+    for key, (_, source, text) in best.items():
+        out[source][text] = totals[key]
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=60)
     ap.add_argument("--himalayas", type=int, default=15)
     ap.add_argument("--seed", type=int, default=20261112)
+    ap.add_argument("--out", default="eligibility_heldout.csv", help="file name inside PRIVATE_DIR")
     args = ap.parse_args()
+    if not 0 <= args.himalayas <= args.n:
+        print("need 0 <= --himalayas <= --n", file=sys.stderr)
+        return 1
     settings = get_settings()
     if settings.private_dir is None:
         print("PRIVATE_DIR is not set", file=sys.stderr)
         return 1
-    out = settings.private_dir / "eligibility_heldout.csv"
-    if out.exists():
-        print(f"{out} exists, not overwriting (it holds hand labels)", file=sys.stderr)
+    out = settings.private_dir / args.out
+    meta = out.with_suffix(".meta")
+    if out.exists() or meta.exists():
+        print(f"{out} or its .meta exists, not overwriting (it holds hand labels)", file=sys.stderr)
         return 1
 
-    seen = {
-        _norm(r["text"]) for r in csv.DictReader((settings.private_dir / "eligibility_labels.csv").open())
-    }
-    by_source = asyncio.run(_wordings(settings.database_url))
+    # Every wording that was ever labeled is excluded: the original set and earlier held-out batches.
+    labeled = [
+        settings.private_dir / "eligibility_labels.csv",
+        *settings.private_dir.glob("eligibility_heldout*.csv"),
+    ]
+    seen = {_norm(r["text"]) for f in labeled if f.exists() for r in csv.DictReader(f.open(encoding="utf-8"))}
+    by_source = _dedupe(asyncio.run(_wordings(settings.database_url)))
     pools = {s: sorted(t for t in texts if _norm(t) not in seen) for s, texts in by_source.items()}
 
     plan = {"himalayas": min(args.himalayas, len(pools.get("himalayas", [])))}
     ats = {s: len(p) for s, p in pools.items() if s != "himalayas" and p}
-    plan |= _allocate(ats, args.n - plan["himalayas"])
+    try:
+        plan |= _allocate(ats, args.n - plan["himalayas"])
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 1
 
     rng = random.Random(args.seed)
     picked = [(s, t) for s, k in sorted(plan.items()) for t in rng.sample(pools[s], k)]
     rng.shuffle(picked)
 
-    with out.open("w", encoding="utf-8", newline="") as f:
+    digest = hashlib.sha256(Path(rules.__file__).read_bytes()).hexdigest()
+    with out.open("x", encoding="utf-8", newline="") as f:  # "x": fails if the file appeared meanwhile
         w = csv.DictWriter(f, fieldnames=["id", "source", "n_postings", "text", "label", "note"])
         w.writeheader()
         for i, (s, t) in enumerate(picked, 1):
             w.writerow(
                 {"id": i, "source": s, "n_postings": by_source[s][t], "text": t, "label": "", "note": ""}
             )
-    digest = hashlib.sha256(Path(rules.__file__).read_bytes()).hexdigest()
-    out.with_suffix(".meta").write_text(f"seed={args.seed}\nplan={plan}\nrules_sha256={digest}\n")
+    with meta.open("x") as f:
+        f.write(f"seed={args.seed}\nplan={plan}\nrules_sha256={digest}\n")
     print(len(picked), "rows ->", out)
     print("plan:", plan, " pool sizes:", {s: len(p) for s, p in pools.items()})
     print("rules.py sha256:", digest)

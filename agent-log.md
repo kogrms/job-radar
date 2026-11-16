@@ -170,3 +170,40 @@ False alarms: none. After fixes: 90 tests; eight mutants (on a temp copy, baseli
 - **Fix:** rebased the uncommitted work onto `pr3b-himalayas` (which merges first anyway).
 - **Rule:** one local Postgres serves every branch. Start a new branch from the branch with the newest migration,
   or downgrade both DBs before switching.
+
+## 2026-11-16 — eligibility baseline independent review (reviewer: Claude Sonnet 5.5 with pr-reviewer instructions)
+
+Run as a general-purpose subagent reading `.claude/agents/pr-reviewer.md`: the project agent type is not loaded
+when the session starts outside the repo. ~450 hand-built strings, every live wording, 34 mutants on a temp copy
+(baseline first, import path checked). Every finding below was reproduced by the implementer before a verdict.
+
+| # | Finding | Verdict | Action |
+|---|---|---|---|
+| A1 | `[+-−]` is a code-point range, not three signs: en dash / non-breaking hyphen in "UTC –1 to UTC +1" → `ValueError` | **Real bug, crash** | Signs listed explicitly (`[+\-−–‑]`); parser cannot fail by construction; fuzz-ish test |
+| A2 | Silent drops (yes → no): "non-EU", "not US", "work with us" (`\busa?\b` with IGNORECASE), "no Serbian language required", "except Belarus", first TZ range only | **Real bugs** | Negated geography stripped first; `US` case-sensitive; `serbia\b`; Belarus and Russia-as-location exclusions no longer "no" (owner ruling); every band checked |
+| A3 | Wasted applications (no → yes): "anywhere in the US", "global team, US only", "not worldwide", "Serbia excluded", "candidates from Russia are not accepted", "US, CET overlap" | **Real bugs** | "anywhere in X" and "not worldwide" stripped; "global" + a place → unclear; wider Serbia negation; "from Russia … not accepted" is a location exclusion → neutral; CET + a country → unclear |
+| A4 | Relocation rule fires on "no relocation assistance"; `\bremote\b` misses "remotely" | **Real bug** | "no relocation …" stripped; `remote(ly)` |
+| A5 | Novi Sad spelling variants, "remote" as a substring escape | Real, low (safe direction) | `novi[\s-]*sad`; substring escape left as is |
+| B1 | Eval crashes on empty / unlabeled / malformed CSV (ZeroDivisionError, KeyError) | Real, medium | Clear errors for missing file/columns, no labeled rows, bad `n_postings` |
+| B2 | Labels like " Yes" silently dropped; half-labeled file gives a confident report | **Real bug** (could mislead a result) | Labels normalised; skipped rows counted and printed |
+| B3 | Freeze check silently skipped without `.meta` | Real, low | Held-out files without `.meta` say "freeze NOT checked" |
+| B4 | Sampler can draw one wording twice from two sources | Real, did not bite this time | Cross-source dedupe (posting counts summed); all earlier held-out batches excluded |
+| B5 | `_allocate` edge cases, overwrite guard not atomic, name shadowing | NIT | Allocation validates totals; `open("x")` for CSV and `.meta`; renamed counter |
+| C | One synthetic case per rule; 13 surviving mutants; no test of any wrong-answer input; two loose `!=` asserts | **Real test gap** | Tests now run the 100-row challenge set; 43 mutants on a temp copy, 0 survive (2 survivors were dead patterns — deleted) |
+| D | No personal data in tracked files | OK | — |
+| E | "0 costly errors" on 60 rows says nothing about wording shapes absent from the sample | Real, framing | decisions.md caveat |
+
+False alarms: none. Lesson for the implementer (me): the held-out sample confirmed the rules on the shapes it
+happened to contain; an adversarial set built by a second model found more costly errors in 5 minutes than the
+labeled sample did. Both are needed.
+
+## 2026-11-16 — a company name from the owner's applications reached a pushed commit
+
+- **What:** `docs/decisions.md` quoted a private label row that names a payroll platform ("B2B via <platform>").
+  The same company is in the owner's applications. The pre-commit scan printed the hit, but the scan and
+  `git commit && git push` were chained in one command, so nothing stopped on it. Commit 0d4ce64, pushed to
+  the private repo.
+- **Fix:** the quote paraphrased in a follow-up; history rewrite only with the owner's OK.
+- **Rule:** the personal-data scan is a gate, not a printout: it exits non-zero on any hit, and commit runs only
+  after it passes. Run it as a separate step and read the result before committing. Don't quote private label
+  rows in tracked files; paraphrase them.

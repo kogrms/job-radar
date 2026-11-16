@@ -59,7 +59,8 @@ Raw vacancy text is stored at collection time, always (lesson from week 0: close
   error class names only; Langfuse self sign-up is disabled; CI token is read-only and actions are pinned to SHAs.
   Keep it that way when adding services.
 - No personal data in tracked files: company names from the owner's applications, emails, CV content stay in the
-  private dir. Before any push, grep tracked files for them.
+  private dir; private label rows are paraphrased, never quoted. Before any commit, scan the staged diff for them
+  as a separate step that fails on any hit; commit only after it passes (2026-11-16 slip, see `agent-log.md`).
 - Log coding-agent mistakes in `agent-log.md` and third-party library oddities in `upstream-bugs.md` as they happen.
 
 ## How we develop

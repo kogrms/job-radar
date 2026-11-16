@@ -4,32 +4,36 @@ take this job, judging by the location wording alone?
 Answers yes / no / unclear. "unclear" is a real answer: it routes the vacancy to a human. The rules encode the
 labeling rules in docs/decisions.md (2026-11-11, refined 2026-11-16).
 
+Russia or Belarus excluded from a list of places ("worldwide except Russia") is ignored: the owner lives in
+Serbia, so it does not apply to him (owner's ruling, 2026-11-16), and neither country is in the place list, so
+no rule reads it. Excluding *people from* Russia ("не берут из РФ", "cannot hire from Russia") is different:
+it may mean citizenship — rule 2.
+
 First, phrases that only look like restrictions are removed, so later rules do not misread them:
-- an exclusion of Russia or Belarus *as a location* ("worldwide except Russia", "candidates from Russia are
-  not accepted"): the owner lives in Serbia, so it does not apply to him (owner's ruling, 2026-11-16);
 - a negated bloc or country ("non-EU", "outside the EU", "not US"), a negated "worldwide" ("not global"), and
   "anywhere in <somewhere>" (that is a restriction to <somewhere>, not "anywhere");
 - "no relocation (assistance)" / "relocation not required" (says nothing about where one may work).
 
 Then, in this order — the first rule that fires wins:
 1. Russian nationals / citizens excluded              -> no
-2. Serbia explicitly negated ("not in Serbia", "Serbia excluded") -> no
-3. Novi Sad / Kraljevo office without Belgrade or remote -> no (owner's commute constraint)
-4. Serbia / Belgrade named, or a Serbian job board phrase -> yes
-5. Russian candidates explicitly welcome            -> yes
-6. Worldwide / anywhere / global                    -> yes; "global" with other geography named -> unclear
+2. People "from Russia" excluded (citizenship or residence? cannot tell) -> unclear
+3. Serbia explicitly negated ("not in Serbia", "Serbia excluded") -> no
+4. Novi Sad / Kraljevo office without Belgrade or remote -> no (owner's commute constraint)
+5. Serbia / Belgrade named, or a Serbian job board phrase -> yes
+6. Russian candidates explicitly welcome            -> yes
+7. Worldwide / anywhere / global                    -> yes; "global" with other geography named -> unclear
    ("global" often describes the company, not the hiring area: "Global team, US only")
-7. Time-zone band that covers Serbia (UTC+1/+2)     -> yes; a band that does not -> no
-8. Named time zones that cover Serbia (CET, EU time zones) -> yes
-   Rules 7-8 give unclear when a country or city is named too ("Remote (US), CET overlap": hours, not
+8. Time-zone band that covers Serbia (UTC+1/+2)     -> yes; a band that does not -> no
+9. Named time zones that cover Serbia (CET, EU time zones) -> yes
+   Rules 8-9 give unclear when a country or city is named too ("Remote (US), CET overlap": hours, not
    location).
-9. EU / EEA / eurozone (legal blocs Serbia is not in) -> no
-10. "No remote / no visa / no relocation" statements -> no
-11. Relocation to another country, remote not offered -> no
-12. Region only (Europe, EMEA)                       -> unclear
-13. Other regions (Americas, APAC, LATAM)            -> no
-14. Named countries or cities, none of them Serbian  -> no
-15. Anything else (bare "Remote", nothing usable)    -> unclear
+10. EU / EEA / eurozone (legal blocs Serbia is not in) -> no
+11. "No remote / no visa / no relocation" statements -> no
+12. Relocation to another country, remote not offered -> no
+13. Region only (Europe, EMEA)                       -> unclear
+14. Other regions (Americas, APAC, LATAM)            -> no
+15. Named countries or cities, none of them Serbian  -> no
+16. Anything else (bare "Remote", nothing usable)    -> unclear
 
 This is the baseline an LLM classifier has to beat; it is deliberately simple and readable.
 """
@@ -56,11 +60,13 @@ def _rx(*alternatives: str) -> re.Pattern[str]:
 
 _RU = r"(?:\bрф\b|\bросси[яиюей]\b|\brussia\b|\bbelarus\b|\bбеларус\w*|\bрб\b)"
 _RU_LIST = rf"{_RU}(?:\s*(?:/|,|\band\b|\bor\b|\bи\b|\bили\b)\s*{_RU})*"
-RUSSIA_LOCATION_EXCLUDED = _rx(
-    rf"(?:не\s+берут|не\s+рассматрива\w*|не\s+нанима\w*|кроме|except(?:ing)?|exclud\w*"
-    rf"|not\s+(?:accept|consider|hire)\w*|cannot\s+hire|can't\s+hire)[^.;]{{0,40}}?{_RU_LIST}",
+# People "from" Russia/Belarus excluded: unclear when Russia is among them; a Belarus-only one is ignored.
+PEOPLE_FROM_RU_EXCLUDED = _rx(
+    rf"(?:не\s+берут|не\s+рассматрива\w*|не\s+нанима\w*|not\s+(?:accept|consider|hire)\w*|cannot\s+hire"
+    rf"|can't\s+hire)[^.;]{{0,40}}?{_RU_LIST}",
     rf"(?:\bиз|\bfrom)\s+{_RU_LIST}[^.;]{{0,30}}?(?:\bnot\b|\bне\s|\bineligible\b)",
 )
+RUSSIA_TOKEN = _rx(r"\bрф\b", r"\bросси[яиюей]\b", r"\brussia\b")
 NEGATED_GEO = _rx(
     r"(?:\bnon|\bnot|\boutside(?:\s+of)?(?:\s+the)?|\bexcluding|\bexcept|\bno)[\s-]+(?:the\s+)?"
     r"(?:eu|european\s+union|eea|us|usa|u\.s\.|uk)\b",
@@ -324,8 +330,11 @@ def classify(text: str) -> Verdict:
         return Verdict("unclear", "empty")
     if ev := _first(RUSSIAN_NATIONALS_EXCLUDED, original):
         return Verdict("no", "russian_nationals_excluded", ev)
+    for m in PEOPLE_FROM_RU_EXCLUDED.finditer(original):
+        if RUSSIA_TOKEN.search(m.group(0)):
+            return Verdict("unclear", "russia_people_excluded", m.group(0))
     t = original
-    for pattern in (RUSSIA_LOCATION_EXCLUDED, NEGATED_GEO, NEGATED_RELOCATION):
+    for pattern in (NEGATED_GEO, NEGATED_RELOCATION):
         t = _strip(pattern, t)
 
     if ev := _first(SERBIA_NEGATED, t):

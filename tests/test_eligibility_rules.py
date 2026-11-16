@@ -34,6 +34,7 @@ def test_challenge_set_is_well_formed() -> None:
     ("text", "rule"),
     [
         ("Russian nationals are not eligible", "russian_nationals_excluded"),
+        ("Remote; не берут из РФ и РБ", "russia_people_excluded"),
         ("Remote, not in Serbia", "serbia_negated"),
         ("Hybrid, 3 days in our Novi Sad office", "novi_sad_office"),
         ("Belgrade, Serbia — hybrid", "serbia_named"),

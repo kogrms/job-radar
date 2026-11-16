@@ -245,3 +245,32 @@ Rules frozen (sha256 `3ae7d1a7…`, same as at sampling and in commit d59da27), 
   place list, so leaving "except Russia" in the text changes nothing) — found by surviving mutants, deleted.
 - **Numbers:** 191 set 91.1% (1 wasted, 4 dropped, 45 to a human; row 169 now agrees); held-out 60 unchanged;
   challenge set 103 rows, 92.2% (0 wasted, 1 dropped). 49 mutants, 0 survive.
+
+## 2026-11-16 — week 2 scope: scoring and new sources move to week 3; durable pipeline design
+
+- **Scope:** week 1's extraction (blocked on an API key) moved into week 2, so scoring against the CV (only 9
+  negative examples to evaluate on) and new sources (Djinni, hh.ru, ATS discovery) move to week 3. Week 3 already
+  has RAG and the letter agent; its spec decides what moves out. The bot starts collecting labels for scoring now.
+- **Pipeline design** (details in `docs/specs/week-2.md`, PR 6), chosen after the spec review:
+  - work is created by a state-based reconcile, not by a cursor over `vacancy_events.id` — sequence ids become
+    visible in commit order, not id order, so a cursor can skip events of concurrent board fetches;
+  - steps run from a cron drain with 60 s leases, heartbeat and fenced commits (`claim_token`), not as one arq job
+    per step — arq redelivers a killed job only after `job_timeout + 10` s and refuses a reused job id for an hour;
+  - one retry layer (ours); SDK retries off; a hard attempt cap that also counts lease-expiry reclaims.
+  - Gave up: event-level latency (work appears within a minute, not instantly) and a scan of open vacancies per
+    minute (~3000 rows).
+- **Week-1 `extractions` table** dropped from the design before it existed: results live in `step_runs`.
+- **Telegram sends are at-least-once.** The Bot API has no idempotency key; a crash between Telegram's answer and
+  our commit repeats one message, tagged so the repeat is visible. The done-when says so instead of claiming
+  "no duplicates".
+
+## 2026-11-16 — LLM provider and models: Anthropic API, Haiku→Opus cascade with a shadow
+
+- **Owner's criteria:** effectiveness, learning value (agentic/cascade patterns), budget not burned on nonsense.
+- **Provider:** Anthropic API; key and monthly spend cap (~$30) set by the owner at console.anthropic.com, key in
+  `.env` only; the per-day cap in config stays on top.
+- **Models:** `extract` on Haiku 5.5; `eligibility_llm` as a cascade — Haiku on every vacancy, Opus 5.5 only where
+  Haiku is unclear or disagrees with rules v2. A seeded ~10% shadow runs Opus on rows Haiku decided, to measure
+  the quality gap; shadow results never feed the pipeline. Details in `docs/specs/week-2.md`, question 1.
+- **Alternatives rejected:** Haiku-only (no routing experience, gap unmeasured), Opus-only (order-of-magnitude
+  cost, teaches nothing about cascades).

@@ -7,7 +7,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from job_radar.collectors import ashby, greenhouse, lever, workable
+from job_radar.collectors import ashby, greenhouse, himalayas, lever, workable
 from job_radar.collectors.base import BoardFetch, FetchFailed, Sleep, get_json
 
 
@@ -31,6 +31,8 @@ _CASE_INSENSITIVE = {"ashby", "greenhouse"}
 
 def canonical_org(source: str, org: str) -> str:
     org = org.strip()
+    if source == "himalayas":
+        return org.upper()  # ISO country code
     return org.lower() if source in _CASE_INSENSITIVE else org
 
 
@@ -40,9 +42,16 @@ async def fetch_board(
     org: str,
     company: str,
     region: str | None = None,
+    queries: list[str] | None = None,
     *,
     sleep: Sleep | None = None,
 ) -> BoardFetch:
+    if source == "himalayas":  # a multi-query search, not a single board URL
+        return await (
+            himalayas.fetch(client, org, queries or [], sleep=sleep)
+            if sleep
+            else himalayas.fetch(client, org, queries or [])
+        )
     collector = COLLECTORS[source]
     url = collector.board_url(org, region)
     try:

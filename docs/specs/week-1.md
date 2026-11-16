@@ -98,6 +98,18 @@ redirect/decoding errors, timeout) — all handled or recorded in `decisions.md`
 **Verify:** run against 3 real boards → rows appear; second run → 0 new rows, 0 events; a board whose fetch
 fails → nothing closed.
 
+### PR 3b — Himalayas (added 2026-11-11)
+
+Aggregator for discovery: the ATS boards only follow companies already known, and none of the 3 screening-stage
+responses in the tracker came from them. Official API only (terms: apply via their link, attribution, no
+redistribution; scraping prohibited). One board per country, several queries merged; polled at most daily.
+
+**Status:** implemented on `pr3b-himalayas`. Live: 5 queries, 1060 postings (811 list Serbia explicitly, 249 have no
+restriction), 124 share a dedup key with ATS postings; second run 0 events; complete after the `totalCount`
+tolerance fix. Hirify: official Agent API exists but needs a paid plan — postponed.
+Independent review: 9 findings (1 real bug: an empty answer to one query was trusted; 4 test gaps from surviving
+mutants) — all handled; 90 tests; eight mutants caught.
+
 ### PR 4 — structured extraction ⚠
 
 - Pydantic schema `VacancyFields`: title, seniority, location quote (verbatim substring of the text), workplace

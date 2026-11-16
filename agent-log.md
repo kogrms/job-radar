@@ -131,3 +131,34 @@ False alarms: none. Mutation re-check after fixes (in a temp copy): six mutants,
 - **Rule (replaces the 'trap' rule):** mutation checks never touch the working tree — copy the repo to a temp dir,
   mutate there, run a baseline first. Second shell accident of the day: stop using ad-hoc shell loops for anything
   that writes files.
+
+## 2026-11-11 — PR 3b: two problems found only by the live run
+
+- **Old worker, new job signature.** A `collect_board` job with the new `queries` argument was picked up by the
+  worker container still running PR 3 code → `TypeError: takes from 4 to 5 positional arguments but 6 were given`.
+  Nothing was written. Fix: rebuild the worker before enqueueing jobs with a new signature. Rule added to CLAUDE.md.
+  For real deployments: job arguments are an API between versions; add new ones as keyword args with defaults and
+  roll workers first.
+- **Exact `totalCount` match made Himalayas never complete** (the API counts 0-2 jobs it does not return). All unit
+  tests passed: the synthetic fixtures had consistent counters. Found by checking `complete` in the live result, not
+  just the counts. Fix and its cost: `docs/decisions.md`.
+
+## 2026-11-11 — PR 3b independent review (reviewer: Claude Sonnet 5.5 with pr-reviewer instructions)
+
+No data loss beyond accepted risks; migration checked up/down on a scratch DB; terms compliance confirmed in code.
+The reviewer's own first mutation run was invalid (its copy imported the real repo's code, so every mutant
+"survived") — it noticed, discarded it and redid the run. Our mutation script now asserts the copy imports itself.
+
+| # | Finding | Verdict | Action |
+|---|---|---|---|
+| 1 | Nothing checked the arguments `collect_all` enqueues (dropping `queries` survived) | **Real test gap** | Test inspects queued jobs' args/kwargs |
+| 2 | "ATS boards are not throttled by MIN_INTERVAL" untested | **Real test gap** | ATS rows with recent fetch still enqueued |
+| 3 | Per-query completeness could be padded by earlier queries' guids | **Real test gap** | Overlap test with a truncated second query |
+| 4 | Tolerance upper bound and missing `totalCount` untested | **Real test gap** | Boundary 980/979 of 1000; missing total |
+| 5 | A query answering `{"jobs": [], "totalCount": 0}` counted as complete → closes everything only it finds | **Real bug** (reproduced) | Empty first page → incomplete; decision recorded |
+| 6 | `queries` enqueued positionally for every board — old workers fail even on ATS jobs | Real, low | Keyword, only when set; test asserts ATS jobs keep the old shape |
+| 7 | Incomplete fetch still moves `last_fetch_at` → next Himalayas try ~a day later | Design, accepted | `decisions.md` |
+| 8 | Loose config (empty query, queries on ATS, region on Himalayas) | Real, minor | Validation + tests |
+| 9 | One malformed job raised out of the task; page delay untested | Real, minor | Fails the fetch cleanly; delay test |
+
+False alarms: none. After fixes: 90 tests; eight mutants (on a temp copy, baseline first), each caught.

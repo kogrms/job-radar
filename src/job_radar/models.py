@@ -16,7 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-SOURCES = ("ashby", "greenhouse", "lever", "workable")
+SOURCES = ("ashby", "greenhouse", "lever", "workable", "himalayas")
 EVENT_KINDS = ("opened", "changed", "closed", "reopened")
 
 

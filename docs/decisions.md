@@ -97,3 +97,28 @@ Non-obvious choices with the alternatives we rejected. Format: context — optio
 - **Context:** a board is `(source, org)`; Lever US and EU are different hosts.
 - **Decision:** keep. One Lever site name lives in one region; the config says which. If the same name ever exists in
   both, add `region` to the key and to `collect_board`'s job id.
+
+## 2026-11-11 — Himalayas completeness: tolerate a small totalCount gap
+
+- **Context:** live, every query was read to an empty last page with no duplicates, yet `totalCount` was 0-2 above
+  the unique jobs returned (python 638/636, ai engineer 475/474, typescript 229/227, llm 190/190, machine learning
+  175/175). With an exact-match rule the fetch was never complete, so Himalayas postings would never close.
+- **Options:** exact match (never closes); ignore `totalCount`; tolerance; close by checking each absent job via the
+  single-job endpoint.
+- **Decision:** complete = every query read to its empty page and unique ≥ total − max(3, 2%). A larger gap still
+  means truncated or shifted results → incomplete.
+- **Cost:** a job that moves between pages during the read can be closed falsely and reopened next day — the same
+  churn already accepted for empty ATS listings. If closures start to matter (week 2), verify absent jobs via
+  `/jobs/api/companies/:company/jobs/:slug` before closing.
+
+## 2026-11-11 — Himalayas: what makes a fetch incomplete, and two consequences (PR 3b review)
+
+- A query whose first page is empty makes the fetch incomplete: a broad query with zero results is likelier a
+  transient or edge-cached empty answer than a real empty market, and trusting it would close every job only that
+  query finds. Consequence: a query that legitimately returns nothing blocks closures — remove such queries.
+- Each query is checked against its own `totalCount` with its own unique count, not the union so far.
+- **Removing or editing a query** in `boards.yml` makes the next complete fetch close the jobs only that query found.
+  Correct by definition (the board is "union of current queries"), but expect a burst of `closed` events.
+- `last_fetch_at` moves on incomplete fetches too, so after an incomplete Himalayas fetch the next try is ~a day
+  later (MIN_INTERVAL 20 h + 6 h cron). Accepted: nothing is lost, closures are just delayed. A separate
+  "last complete fetch" column would fix it if it ever matters.

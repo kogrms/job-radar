@@ -294,3 +294,208 @@ def test_load_boards_canonicalizes_and_dedupes(tmp_path: Path) -> None:
 
 def test_html_to_text_keeps_structure() -> None:
     assert html_to_text("<p>One</p><p>Two<br>Three</p><script>x()</script>") == "One\nTwo\nThree"
+
+
+# --- Himalayas (aggregator search) ------------------------------------------------------------------------
+
+
+def hjob(n: int, **over: Any) -> dict[str, Any]:
+    guid = f"https://himalayas.app/companies/co{n}/jobs/role-{n}"
+    return {
+        "guid": guid,
+        "applicationLink": f"{guid}?utm_source=api",
+        "title": f"Engineer {n}",
+        "companyName": f"Co {n}",
+        "locationRestrictions": ["Serbia", "Croatia"],
+        "timezoneRestrictions": [1, 2],
+        "description": f"<p>Job {n}</p>",
+        **over,
+    }
+
+
+def hpage(jobs: list[dict[str, Any]], total: int) -> httpx.Response:
+    return httpx.Response(200, json={"jobs": jobs, "totalCount": total, "offset": 0, "limit": 20})
+
+
+def hroute(query: str, page: int) -> Any:
+    return respx.get(
+        "https://himalayas.app/jobs/api/search", params={"q": query, "country": "RS", "page": str(page)}
+    )
+
+
+async def hfetch(queries: list[str]) -> BoardFetch:
+    async with make_client() as client:
+        return await fetch_board(client, "himalayas", "RS", "", None, queries, sleep=no_sleep)
+
+
+@respx.mock
+async def test_himalayas_pages_until_empty_and_merges_queries() -> None:
+    hroute("python", 1).mock(return_value=hpage([hjob(1), hjob(2)], 3))
+    hroute("python", 2).mock(return_value=hpage([hjob(3)], 3))
+    hroute("python", 3).mock(return_value=hpage([], 3))
+    hroute("llm", 1).mock(
+        return_value=hpage([hjob(2), hjob(4, locationRestrictions=[], timezoneRestrictions=[])], 2)
+    )
+    hroute("llm", 2).mock(return_value=hpage([], 2))
+    f = await hfetch(["python", "llm"])
+    assert f.complete
+    assert sorted(p.title for p in f.postings) == [
+        "Engineer 1",
+        "Engineer 2",
+        "Engineer 3",
+        "Engineer 4",
+    ]  # job 2 once
+    p1 = next(p for p in f.postings if p.title == "Engineer 1")
+    assert p1.url.endswith("?utm_source=api")  # terms: their apply link, unchanged
+    assert p1.company == "Co 1" and p1.raw_text == "Job 1"
+    assert p1.location_raw == "Serbia; Croatia | Time zones: UTC+1, UTC+2"
+    p4 = next(p for p in f.postings if p.title == "Engineer 4")
+    assert p4.location_raw == "No location restrictions listed"
+
+
+@respx.mock
+async def test_himalayas_total_gap_beyond_tolerance_is_incomplete() -> None:
+    hroute("python", 1).mock(return_value=hpage([hjob(1)], 50))  # says 50, delivered 1
+    hroute("python", 2).mock(return_value=hpage([], 50))
+    f = await hfetch(["python"])
+    assert len(f.postings) == 1 and not f.complete
+
+
+@respx.mock
+async def test_himalayas_small_counter_gap_is_complete() -> None:
+    # Live behaviour: totalCount 638, 636 returned — expired/hidden jobs are counted but not listed.
+    hroute("python", 1).mock(return_value=hpage([hjob(1), hjob(2)], 4))
+    hroute("python", 2).mock(return_value=hpage([], 4))
+    f = await hfetch(["python"])
+    assert len(f.postings) == 2 and f.complete
+
+
+@respx.mock
+async def test_himalayas_failure_after_first_page_keeps_data_but_is_incomplete() -> None:
+    hroute("python", 1).mock(return_value=hpage([hjob(1)], 2))
+    hroute("python", 2).mock(side_effect=[httpx.Response(503)] * 4)
+    f = await hfetch(["python"])
+    assert [p.title for p in f.postings] == ["Engineer 1"] and not f.complete and f.error is None
+
+
+@respx.mock
+async def test_himalayas_failure_on_first_page_is_a_failed_fetch() -> None:
+    hroute("python", 1).mock(return_value=httpx.Response(404))
+    f = await hfetch(["python"])
+    assert f.error and not f.postings and not f.complete
+
+
+async def test_himalayas_without_queries_is_a_failed_fetch() -> None:
+    f = await hfetch([])
+    assert f.error == "no queries configured"
+
+
+@respx.mock
+async def test_himalayas_page_cap_makes_the_fetch_incomplete(monkeypatch: pytest.MonkeyPatch) -> None:
+    from job_radar.collectors import himalayas
+
+    monkeypatch.setattr(himalayas, "MAX_PAGES", 2)
+    hroute("python", 1).mock(return_value=hpage([hjob(1)], 3))
+    hroute("python", 2).mock(return_value=hpage([hjob(2)], 3))
+    f = await hfetch(["python"])
+    assert len(f.postings) == 2 and not f.complete
+
+
+def test_board_config_rules(tmp_path: Path) -> None:
+    f = tmp_path / "boards.yml"
+    f.write_text("boards:\n  - {source: himalayas, org: rs, queries: [python, llm]}\n")
+    [b] = load_boards(f)
+    assert (b.org, b.queries, b.company) == ("RS", ["python", "llm"], "")
+    for bad in ["{source: himalayas, org: rs}", "{source: ashby, org: x}"]:
+        f.write_text(f"boards:\n  - {bad}\n")
+        with pytest.raises(ValueError):
+            load_boards(f)
+
+
+def hpages(jobs: list[dict[str, Any]], total: int | None) -> Any:
+    """Route side effect serving `jobs` 20 per page for any query; total=None omits totalCount."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params["page"])
+        chunk = jobs[(page - 1) * 20 : page * 20]
+        body: dict[str, Any] = {"jobs": chunk}
+        if total is not None:
+            body["totalCount"] = total
+        return httpx.Response(200, json=body)
+
+    return respond
+
+
+@pytest.mark.parametrize(("seen", "complete"), [(980, True), (979, False)])
+@respx.mock
+async def test_himalayas_tolerance_boundary(seen: int, complete: bool) -> None:
+    # total 1000 -> tolerance max(3, 2%) = 20 -> 980 is the lowest complete count
+    respx.get("https://himalayas.app/jobs/api/search").mock(
+        side_effect=hpages([hjob(n) for n in range(seen)], 1000)
+    )
+    f = await hfetch(["python"])
+    assert len(f.postings) == seen and f.complete is complete
+
+
+@respx.mock
+async def test_himalayas_missing_total_is_incomplete() -> None:
+    respx.get("https://himalayas.app/jobs/api/search").mock(side_effect=hpages([hjob(1)], None))
+    assert not (await hfetch(["python"])).complete
+
+
+@respx.mock
+async def test_himalayas_query_with_no_results_is_incomplete() -> None:
+    hroute("python", 1).mock(return_value=hpage([hjob(1)], 1))
+    hroute("python", 2).mock(return_value=hpage([], 1))
+    hroute("llm", 1).mock(return_value=hpage([], 0))  # transient / cached empty answer
+    f = await hfetch(["python", "llm"])
+    assert len(f.postings) == 1 and not f.complete
+
+
+@respx.mock
+async def test_himalayas_overlap_does_not_hide_a_truncated_query() -> None:
+    first = [hjob(n) for n in range(40)]
+    hroute("python", 1).mock(return_value=hpage(first[:20], 40))
+    hroute("python", 2).mock(return_value=hpage(first[20:], 40))
+    hroute("python", 3).mock(return_value=hpage([], 40))
+    # "llm" claims 40 jobs but delivers 1; that one overlaps "python", so the union looks big enough.
+    hroute("llm", 1).mock(return_value=hpage([first[0]], 40))
+    hroute("llm", 2).mock(return_value=hpage([], 40))
+    f = await hfetch(["python", "llm"])
+    assert len(f.postings) == 40 and not f.complete
+
+
+@respx.mock
+async def test_himalayas_malformed_job_fails_the_fetch() -> None:
+    hroute("python", 1).mock(return_value=hpage([hjob(1), {"title": "no guid"}], 2))
+    f = await hfetch(["python"])
+    assert f.error is not None and f.error.startswith("parse: KeyError") and not f.postings
+
+
+@respx.mock
+async def test_himalayas_waits_between_pages() -> None:
+    hroute("python", 1).mock(return_value=hpage([hjob(1)], 1))
+    hroute("python", 2).mock(return_value=hpage([], 1))
+    delays: list[float] = []
+
+    async def record(d: float) -> None:
+        delays.append(d)
+
+    async with make_client() as client:
+        await fetch_board(client, "himalayas", "RS", "", None, ["python"], sleep=record)
+    assert delays == [1.0]  # terms politeness: PAGE_DELAY_S after each non-empty page
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "{source: himalayas, org: rs, queries: ['  ']}",
+        "{source: himalayas, org: rs, queries: [python], region: eu}",
+        "{source: ashby, org: x, company: X, queries: [python]}",
+    ],
+)
+def test_board_config_rejects_misplaced_fields(tmp_path: Path, bad: str) -> None:
+    f = tmp_path / "boards.yml"
+    f.write_text(f"boards:\n  - {bad}\n")
+    with pytest.raises(ValueError):
+        load_boards(f)

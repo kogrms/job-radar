@@ -6,3 +6,5 @@ boards:
   - {source: lever, org: examplecorp, company: Example Corp}
   - {source: lever, org: examplecorp-eu, company: Example Corp, region: eu}
   - {source: workable, org: examplecorp, company: Example Corp}
+  # Aggregator search: org = ISO country code, results of all queries merged; polled at most once a day.
+  - {source: himalayas, org: RS, queries: [python, llm]}

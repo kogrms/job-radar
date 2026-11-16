@@ -18,6 +18,7 @@ the review) are not escapes.
 | 2026-11-11 | 3 ATS collectors | Sonnet 5.5 | 10 | 3 | 3 | 4 | 0 | 0 known |
 | 2026-11-11 | 3b Himalayas | Sonnet 5.5 | 9 | 4 | 4 | 1 | 0 | 0 known |
 | 2026-11-16 | 5 eligibility rules | Sonnet 5.5 | 13 | 9 | 1 | 3 | 0 | 0 known |
+| 2026-11-16 | spec week 2 (draft 1) | Sonnet 5.5 | 12 groups, ~40 items | 2 design bugs (outbox cursor loses events; arq redelivery makes kill -9 recovery 10 min) | — | 5 gaps, 2 contradictions, scope, security | 0 | — |
 
 Caveat: "0 known" escapes because nobody was looking until 2026-11-16. From now on every later-found defect in
 reviewed code is logged here against the review that passed it. All four reviews used one model family, the
@@ -225,3 +226,20 @@ labeled sample did. Both are needed.
 - **Rule:** the personal-data scan is a gate, not a printout: it exits non-zero on any hit, and commit runs only
   after it passes. Run it as a separate step and read the result before committing. Don't quote private label
   rows in tracked files; paraphrase them.
+
+## 2026-11-16 — week-2 spec review (draft 1): two design bugs caught before any code
+
+- **What:** draft 1 of `docs/specs/week-2.md` proposed an event cursor over `vacancy_events.id`. Concurrent board
+  fetches commit out of id order, so the cursor would skip events and lose vacancies silently. It also left step
+  retries to arq, whose redelivery after `kill -9` takes `job_timeout + 10` s (610 s) and whose job-id dedup
+  blocks re-enqueue for an hour. Both claims checked by the implementer (arq source in `.venv`, `store.py` flush
+  and commit points).
+- **Also found:** no fenced commit (a worker whose lease expired could overwrite another's result); content
+  changes would store a result under the wrong input hash; the prompt author has seen every existing eval set;
+  "no duplicate Telegram messages" is impossible as stated; the owner profile would have landed in a tracked prompt
+  file; the 15% unfiltered sample was not measurable as specified.
+- **Fix:** draft 2 of the spec (state-based reconcile, cron drain with leases and fenced commits, input check at
+  commit, prompt freeze before scoring a fresh batch, at-least-once sends stated honestly, profile in the private
+  dir, sample drawn among rejected vacancies with stored probability).
+- **Lesson:** the spec review paid for itself on the first try: both design bugs would have been expensive after
+  PR 6 was written. Concurrency claims in a spec need the same "how does this commit?" check as code.

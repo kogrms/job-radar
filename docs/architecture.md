@@ -42,9 +42,9 @@ Source plan: `/Users/k/job-search/ai-engineer-plan.md`. Week numbers below (W1�
 | Vacancy store | One row per canonical id (`source`, `org`, `job_id`), idempotent upsert, event log, `dedup_key` across sources | Postgres, SQLAlchemy 2 async, Alembic | W1 |
 | Extraction | Text → typed fields (location quote, workplace type, countries, salary, stack). Validated, one retry, invalid rate tracked | Pydantic, LLM structured output | W1 |
 | Eligibility classifier | "Can the owner take this from Serbia with a Russian passport?" → yes / no / unknown. Unknown goes to the human | LLM + rules; benchmark of 191 hand-labeled wordings | W2 |
-| Scoring | Fit against the CV. Cheap local model filters first, strong model scores the rest | Ollama (Qwen 7–8B) + API model | W2, cascade W4 |
-| Workflow state | Each step's status, result and error stored separately; steps idempotent; resumes after `kill -9` | Postgres + arq | W2 |
-| Telegram bot | Daily digest, buttons apply / skip / why; every decision becomes a label; 10–20% shown unfiltered | python-telegram-bot or aiogram | W2 |
+| Scoring | Fit against the CV. Cheap local model filters first, strong model scores the rest | Ollama (Qwen 7–8B) + API model | W3 (moved from W2, see decisions 2026-11-16), cascade W4 |
+| Workflow state | Each step's status, result and error stored separately; steps idempotent; resumes after `kill -9` | Postgres (`step_runs`, state-based reconcile, leases with fenced commits) + arq cron | W2 |
+| Telegram bot | Daily digest, buttons apply / skip / why; every decision becomes a label; 10–20% shown unfiltered | aiogram, own container | W2 |
 | RAG | Chunks of `cv.md`, `log.md`, past application folders; hybrid search + reranking; recall@k | pgvector + Postgres FTS | W3 |
 | Letter agent | Writes a cover letter and screening prep; every claim cites a chunk; unsupported-claim rate measured | LLM with tools, SSE | W3 |
 | Evals | Frozen scoring set, eligibility benchmark, model table (accuracy × p50/p95 × cost × invalid rate), LLM judge, CI gate | Inspect AI, Langfuse datasets, GitHub Actions | W1 baseline, W4 |
@@ -57,8 +57,8 @@ Source plan: `/Users/k/job-search/ai-engineer-plan.md`. Week numbers below (W1�
 
 - **Public repo:** code, synthetic fixtures, docs. **Private dir** (`/Users/k/job-search/`): past decisions,
   vacancy texts, labels, CV. The repo reads it by path from env; CI never sees it.
-- **Postgres tables (grow by week):** `vacancies`, `vacancy_events` (W1) → `extractions` (W1) → `step_runs`,
-  `decisions` / labels (W2) → `chunks` with embeddings (W3) → `eval_runs` (W4).
+- **Postgres tables (grow by week):** `vacancies`, `vacancy_events` (W1) → `step_runs` (every step's result,
+  extraction included), `human_decisions` (W2) → `chunks` with embeddings (W3) → `eval_runs` (W4).
 
 ## What the finished repo shows
 

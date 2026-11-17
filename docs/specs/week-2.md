@@ -2,7 +2,8 @@
 
 Plan: `/Users/k/job-search/ai-engineer-plan.md`, "Неделя 2" (plus the week-1 leftovers: extraction and its eval).
 Process: `CLAUDE.md`, "How we develop". Draft 1 was spec-reviewed on 2026-11-16 (findings and verdicts in
-`agent-log.md`); this is draft 2, approved by the owner on 2026-11-16.
+`agent-log.md`); this is draft 2, approved by the owner on 2026-11-16. Amended 2026-11-17 by the owner: the LLM
+provider is OpenAI, not Anthropic (question 1).
 
 **Done when:**
 - `kill -9` of the worker in the middle of a vacancy's pipeline → after restart the vacancy finishes from its last
@@ -23,7 +24,7 @@ several review rounds; spilling into week 3 is likely and will be recorded, not 
   examples; the bot starts collecting labels for it first. Consequence: week 3 (RAG + letter agent) gets scoring
   too; the week-3 spec decides what moves from it.
 - New sources (Djinni, hh.ru, ATS auto-discovery) → week 3; Djinni and hh.ru start with a terms check, no code.
-- Local models / cascade, Inspect AI (week 4); UI (week 6).
+- Local models (on hold by the owner, 2026-11-17), Inspect AI (week 4); UI (week 6).
 
 ## State at the start (2026-11-16)
 
@@ -114,11 +115,14 @@ the dry run prints the estimated cost.
 
 ### PR 7 — LLM client and structured extraction ⚠ (supersedes week-1 PR 4 + PR 5)
 
-- **LLM layer** over the official `anthropic` SDK (exact methods checked against the SDK docs when writing; draft
-  1's names are unverified): structured output into a Pydantic schema; SDK `max_retries=0` and an explicit timeout,
-  so the only retry layer is PR 6's (no hidden cost multiplier); typed SDK exceptions mapped to transient /
-  permanent; every call traced in Langfuse (model, prompt version, tokens, cost, latency). Decision record for the
-  provider in `decisions.md`.
+- **LLM layer** over the official `openai` SDK (exact methods checked against the SDK docs when writing): structured
+  output into a Pydantic schema, validated by Pydantic on our side whatever the server promises. Chat Completions
+  or Responses is chosen when writing and recorded in `decisions.md`. Model ids in config; the API key is read
+  from env. Reasoning effort, if the model has it, is fixed per step in config and stored with the prompt
+  version; cost is computed from the response's usage (reasoning tokens bill as output). SDK `max_retries=0` and
+  an explicit timeout, so the only retry layer is PR 6's (no hidden cost multiplier); typed SDK exceptions mapped
+  to transient / permanent; every call traced in Langfuse (model, prompt version, tokens, cost, latency). Decision
+  record for the provider in `decisions.md`.
 - **Step `extract`**, schema `VacancyFields` as in the week-1 spec. Result in `step_runs.result`; cost, latency,
   model, prompt version in its columns. The week-1 `extractions` table is dropped from the design (never created).
   Verbatim location quote must be a substring of `raw_text`; invalid output → one retry with the validation error,
@@ -163,8 +167,8 @@ claiming in a test with a fake LLM; the injection fixtures pass.
   honest column) plus the in-sample sets, marked as such. Columns: per-class counts, accuracy, wasted, dropped,
   sent to human, **unclear precision and recall**, cost, invalid-output rate, and per-posting weighted numbers.
   With ~80 rows, differences inside the rule-of-three / per-class interval are reported as "no difference shown".
-- **Tuning model:** the prompt is tuned on Haiku 5.5 (the cascade's first stage, decided in question 1); Opus 5.5
-  runs the frozen prompt unchanged and is reported as such.
+- **Tuning model:** the prompt is tuned on `gpt-6-luna` (the cascade's first stage, decided in question 1);
+  `gpt-6.1-sol` runs the frozen prompt unchanged and is reported as such.
 - **Decision policy, selection criterion fixed now:** minimise dropped yes (the costly error), then wasted
   applications, then the human load. Candidates: LLM alone; agree-else-human; rules where they are confident,
   LLM otherwise. Chosen on the in-sample sets, confirmed once on the fresh batch. Stated worst cases: LLM alone —
@@ -178,7 +182,7 @@ decision; the injection fixtures pass.
 
 - **Process:** the bot is its own compose service (aiogram — async like the rest; dependency checked before
   adding), non-root, no published port, long polling. Killing the worker does not kill the bot. Each container
-  gets only the env vars it needs (`TELEGRAM_*` for the bot; `ANTHROPIC_API_KEY` only for the worker).
+  gets only the env vars it needs (`TELEGRAM_*` for the bot; `OPENAI_API_KEY` only for the worker).
 - **Who may talk to it:** messages and callback queries are accepted only from the owner's user id in a private
   chat; everything else is ignored (groups, forwards, other users).
 - **Step `notify`** after the decision policy. Digest when the policy says yes or unclear, plus the unfiltered
@@ -215,22 +219,25 @@ on a superseded and on a closed vacancy. Then the done-when video on the real bo
 
 ## Open questions for the owner (1–2 block PR 7, 3–4 block PR 9)
 
-1. ~~LLM provider, key, monthly budget~~ — **decided 2026-11-16: Anthropic API, cheap/expensive cascade.**
-   The owner creates a key at console.anthropic.com, sets a monthly spend cap there (~$30) and puts the key into
-   `.env`; the per-day cap in config stays on top of it. Model policy:
-   - **`extract`** runs on Haiku 5.5 (narrow structured step). A seeded ~10% **shadow** also runs Opus 5.5 on the
-     same input; both results are stored, only Haiku's feeds the pipeline. The shadow measures the quality gap and
-     is the data for keeping or dropping Haiku.
-   - **`eligibility_llm`** is a **cascade**: Haiku 5.5 on every vacancy; Opus 5.5 only where Haiku says unclear or
-     disagrees with rules v2. Plus the same seeded ~10% Opus shadow on rows where Haiku and the rules agree.
+1. ~~LLM provider, key, monthly budget~~ — **decided 2026-11-16 as a cheap/expensive cascade; provider changed
+   to OpenAI by the owner on 2026-11-17** (was Anthropic). The owner buys prepaid credits on the OpenAI platform
+   with auto-recharge **off** — the prepaid balance is the hard cap (OpenAI's monthly recharge limit only limits
+   automatic purchases, not usage) — creates an API key and puts it into `.env` as `OPENAI_API_KEY`; the per-day
+   cap in config stays on top of it. Model policy (ids from OpenAI's models page on 2026-11-17, none on the
+   deprecation list; pinned in config):
+   - **`extract`** runs on `gpt-6-luna` (narrow structured step). A seeded ~10% **shadow** also runs
+     `gpt-6.1-sol` on the same input; both results are stored, only luna's feeds the pipeline. The shadow measures
+     the quality gap and is the data for keeping or dropping luna.
+   - **`eligibility_llm`** is a **cascade**: luna on every vacancy; sol only where luna says unclear or disagrees
+     with rules v2. Plus the same seeded ~10% sol shadow on rows where luna and the rules agree.
    - Shadow and escalation results are marked in `step_runs` (`model` column) and never overwrite the deciding
-     run; the PR 8 table reports Haiku, Opus and the cascade as separate columns.
-   Prices per million tokens (input / output), from Anthropic's model table as cached on 2026-10-06 — recheck on
-   the pricing page before setting the budget: Haiku 5.5 $0.10 / $0.50, Sonnet 5.5 $2 / $10, Opus 5.5 $4 / $20;
-   the Batch API halves them. Rough size: one vacancy ≈ 3k input tokens; ~100 new a day ≈ 0.3M input tokens —
-   cents a day on Haiku; the cascade adds Opus only on the unclear/disagree tail plus the 10% shadow, expected
-   single dollars a month. A full backfill of ~3000 ≈ 9M input tokens: ~$1 on Haiku; the Opus tail is capped by
-   the per-day budget.
+     run; the PR 8 table reports luna, sol and the cascade as separate columns.
+   - `gpt-6-astra` ($10 / $50) is not used: a 10% shadow on it alone would eat most of a $30 month.
+   Prices per million tokens (input / output, standard tier), from OpenAI's pricing page on 2026-11-17 — recheck
+   before setting the budget: `gpt-6-luna` $0.10 / $0.50, `gpt-6.1-sol` $2 / $10; Batch and Flex are about half.
+   Rough size: one vacancy ≈ 3k input tokens; ~100 new a day ≈ 0.3M input tokens — cents a day on luna; the
+   cascade adds sol only on the unclear/disagree tail plus the 10% shadow, expected single dollars a month. A full
+   backfill of ~3000 ≈ 9M input tokens: ~$1 on luna; the sol tail is capped by the per-day budget.
 2. ~~Himalayas texts and the LLM provider~~ — **decided 2026-11-16:** full texts from every source go to the LLM.
    Owner's personal project; the criteria are effectiveness, learning value and not wasting budget.
 3. ~~Telegram~~ — **decided:** a new bot of its own (a token can be polled by one process only; the other

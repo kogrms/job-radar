@@ -264,7 +264,7 @@ Rules frozen (sha256 `3ae7d1a7…`, same as at sampling and in commit d59da27), 
   our commit repeats one message, tagged so the repeat is visible. The done-when says so instead of claiming
   "no duplicates".
 
-## 2026-11-16 — LLM provider and models: Anthropic API, Haiku→Opus cascade with a shadow
+## 2026-11-16 — LLM provider and models: Anthropic API, Haiku→Opus cascade with a shadow (provider SUPERSEDED 2026-11-17, see below)
 
 - **Owner's criteria:** effectiveness, learning value (agentic/cascade patterns), budget not burned on nonsense.
 - **Provider:** Anthropic API; key and monthly spend cap (~$30) set by the owner at console.anthropic.com, key in
@@ -286,3 +286,16 @@ Rules frozen (sha256 `3ae7d1a7…`, same as at sampling and in commit d59da27), 
   statements are chunked under asyncpg's 32767-parameter limit, and a row whose (vacancy, step) has no
   derivable desired input is left to the claim-time input check instead of being superseded (closes a race
   with the commit-time next-step insert).
+
+## 2026-11-17 — LLM provider: OpenAI API, luna→sol cascade with a shadow
+
+- **Supersedes the provider** of the 2026-11-16 entry, owner's call before any LLM code existed (nothing to
+  migrate). The cascade-plus-shadow policy is unchanged; only the models map: Haiku 5.5 → `gpt-6-luna`
+  ($0.10 / $0.50 per M tokens, the same price), Opus 5.5 → `gpt-6.1-sol` ($2 / $10, half of Opus).
+  `gpt-6-astra` ($10 / $50) rejected for the shadow: 10% of traffic on it would eat most of the month's budget.
+- **Budget:** prepaid credits with auto-recharge off, so the balance is the hard cap; OpenAI's monthly recharge
+  limit caps only automatic purchases, not usage. The per-day cap in config stays on top. Key in `.env` as
+  `OPENAI_API_KEY`, worker container only.
+- **Local models are on hold** (owner, 2026-11-17). If they come back: Ollama serves an OpenAI-compatible API,
+  so the same client with another `base_url` would cover them.
+- **Gave up:** nothing measured yet. Claude can return as an extra column in the eval tables.

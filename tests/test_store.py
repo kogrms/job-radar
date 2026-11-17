@@ -69,6 +69,7 @@ class Model:
     rows: dict[str, Row]
     events: Counter[str]
     last_at: datetime | None = None
+    last_complete_empty: bool = False
 
     @classmethod
     def empty(cls) -> "Model":
@@ -95,9 +96,14 @@ class Model:
                 self.events["changed"] += 1  # also when reopened in the same fetch
             r.variant, r.last_seen = variant, f.at
         if f.complete:
-            for jid in self.open - f.postings.keys():
-                self.rows[jid].closed_at = f.at
-                self.events["closed"] += 1
+            # An empty complete listing closes the board only when the previous complete fetch was empty
+            # too (one-off empty listings are ATS incidents; decisions.md 2026-11-16).
+            empty = not f.postings
+            if not empty or self.last_complete_empty:
+                for jid in self.open - f.postings.keys():
+                    self.rows[jid].closed_at = f.at
+                    self.events["closed"] += 1
+            self.last_complete_empty = empty
 
     def expected(self) -> tuple[dict[str, tuple[Any, ...]], Counter[str]]:
         rows = {}
@@ -201,17 +207,34 @@ def test_out_of_order_fetches_never_regress(db_url: str, fetches: list[Fetch], r
 
     async def scenario(engine: AsyncEngine) -> None:
         model = Model.empty()
+        accepted: list[Fetch] = []
         for f in shuffled:
             result = await apply(engine, f)
             expected_stale = model.last_at is not None and f.at <= model.last_at
             assert (result.outcome == "stale") == expected_stale
+            if not expected_stale:
+                accepted.append(f)  # stale fetches never touch state (review of PR 6, finding 1)
             model.apply(f)
         assert await db_state(engine) == model.expected()
-        if all(f.complete for f in fetches):
-            # Spec wording: with complete fetches only, the open set is exactly the newest fetch's postings.
-            newest = max(fetches, key=lambda f: f.at)
+        if accepted and all(f.complete for f in accepted):
+            # Spec wording: with complete fetches only, the open set is exactly the newest NON-EMPTY applied
+            # fetch's postings — an empty listing closes the board only after two in a row (the two-empty
+            # rule), so a single trailing empty fetch leaves the previous open set intact. Only the APPLIED
+            # subsequence counts: a fetch that arrived late is stale and invisible.
+            empties = 0
+            for f in reversed(accepted):  # accepted is in increasing `at` order by construction
+                if f.postings:
+                    break
+                empties += 1
             rows, _ = await db_state(engine)
-            assert {j for j, r in rows.items() if r[-1] is None} == set(newest.postings)
+            open_ids = {j for j, r in rows.items() if r[-1] is None}
+            if empties == 0:
+                assert open_ids == set(accepted[-1].postings)
+            elif empties >= 2:
+                assert open_ids == set()
+            else:  # exactly one trailing empty listing: nothing closed by it
+                before = next((f for f in reversed(accepted) if f.postings), None)
+                assert open_ids == (set(before.postings) if before else set())
 
     check(db_url, scenario)
 
@@ -330,5 +353,33 @@ def test_volatile_payload_does_not_count_as_a_change(db_url: str) -> None:
             moved = Posting(**{**p.__dict__, "raw_payload": {"volatile": 999}})
             result = await apply_fetch(session, SOURCE, ORG, [moved], T0 + timedelta(hours=1), complete=True)
         assert result.unchanged == 1 and result.changed == 0
+
+    check(db_url, scenario)
+
+
+def test_one_empty_listing_closes_nothing_two_in_a_row_close_the_board(db_url: str) -> None:
+    """An ATS incident looks like one empty complete listing: the first one must not close anything."""
+
+    async def scenario(engine: AsyncEngine) -> None:
+        await apply(engine, Fetch(T0, {"a": 0, "b": 0}, True))
+
+        first_empty = await apply(engine, Fetch(T0 + timedelta(hours=1), {}, True))
+        assert first_empty.closed == 0
+
+        # A non-empty complete fetch in between resets the streak: the next empty one is "first" again.
+        await apply(engine, Fetch(T0 + timedelta(hours=2), {"a": 0}, True))  # closes b legitimately
+        reset_empty = await apply(engine, Fetch(T0 + timedelta(hours=3), {}, True))
+        assert reset_empty.closed == 0
+
+        second_empty = await apply(engine, Fetch(T0 + timedelta(hours=4), {}, True))
+        assert second_empty.closed == 1  # now a closes: two empty complete listings in a row
+
+        async with make_sessionmaker(engine)() as session:
+            open_ids = (
+                (await session.execute(select(Vacancy.source_job_id).where(Vacancy.closed_at.is_(None))))
+                .scalars()
+                .all()
+            )
+        assert open_ids == []
 
     check(db_url, scenario)

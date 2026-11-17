@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     langfuse_public_key: str | None = None
     langfuse_secret_key: SecretStr | None = None
 
+    # Step pipeline (docs/specs/week-2.md, PR 6). Lease: how long a claimed run may go without a heartbeat
+    # before another drain reclaims it; recovery after kill -9 is ~1 lease + 1 drain interval.
+    step_lease_seconds: int = 60
+    drain_batch_size: int = 10
+    step_attempt_cap: int = 5
+    step_hard_timeout_seconds: float = 300
+    step_backoff_base_seconds: float = 30
+
     # Private data (past decisions, vacancy texts, labels). Never copied into the repo; unset in CI.
     private_dir: Path | None = None
     # Boards to poll (YAML, see examples/boards.yml). Personal, so it lives in the private dir.

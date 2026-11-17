@@ -15,6 +15,8 @@ from job_radar.collectors.base import make_client
 from job_radar.config import get_settings
 from job_radar.db import make_engine, make_sessionmaker
 from job_radar.models import Board
+from job_radar.steps.chain import CHAIN
+from job_radar.steps.engine import Engine
 from job_radar.store import apply_fetch
 
 log = logging.getLogger(__name__)
@@ -83,10 +85,32 @@ async def collect_all(ctx: dict[str, Any]) -> int:
     return queued
 
 
+async def reconcile_steps(ctx: dict[str, Any]) -> dict[str, int]:
+    """Create/revive/supersede step runs from committed state. Runs every minute; idempotent."""
+    engine: Engine = ctx["steps"]
+    return asdict(await engine.reconcile())
+
+
+async def drain_steps(ctx: dict[str, Any]) -> dict[str, int]:
+    """Claim and execute a batch of step runs. Retries belong to the engine, never to arq (max_tries=1)."""
+    engine: Engine = ctx["steps"]
+    return await engine.drain()
+
+
 async def startup(ctx: dict[str, Any]) -> None:
-    ctx["engine"] = make_engine(get_settings().database_url)
+    settings = get_settings()
+    ctx["engine"] = make_engine(settings.database_url)
     ctx["sessionmaker"] = make_sessionmaker(ctx["engine"])
     ctx["http"] = make_client()
+    ctx["steps"] = Engine(
+        ctx["sessionmaker"],
+        CHAIN,
+        lease_seconds=settings.step_lease_seconds,
+        batch_size=settings.drain_batch_size,
+        attempt_cap=settings.step_attempt_cap,
+        hard_timeout_seconds=settings.step_hard_timeout_seconds,
+        backoff_base_seconds=settings.step_backoff_base_seconds,
+    )
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
@@ -96,7 +120,21 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 
 class WorkerSettings:
     functions: ClassVar[list[Any]] = [ping, collect_board, collect_all]
-    cron_jobs: ClassVar[list[Any]] = [cron(collect_all, hour={0, 6, 12, 18}, minute=5)]
+    cron_jobs: ClassVar[list[Any]] = [
+        cron(collect_all, hour={0, 6, 12, 18}, minute=5),
+        # The pipeline's own retry layer (leases, backoff, attempt cap) decides re-runs: arq must never
+        # retry these jobs (max_tries=1). Offsets put the usual reconcile before the next drain.
+        cron(reconcile_steps, second=0, max_tries=1, timeout=120),
+        # arq cron jobs are unique by default: while one drain (or reconcile) runs, the next minute's
+        # enqueue is skipped, so slow steps cannot pile drains up and starve the collect jobs.
+        cron(
+            drain_steps,
+            second=30,
+            max_tries=1,
+            # Longer than a full batch of hard-timeout steps, so arq never kills a drain mid-step.
+            timeout=int(get_settings().step_hard_timeout_seconds * get_settings().drain_batch_size) + 60,
+        ),
+    ]
     # Worst case per board: 4 attempts x 20 s timeout + Retry-After sleeps capped at 60 s ~ 260 s.
     job_timeout = 600
     on_startup = startup

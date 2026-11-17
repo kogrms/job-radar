@@ -18,6 +18,7 @@ the review) are not escapes.
 | 2026-11-11 | 3 ATS collectors | Sonnet 5.5 | 10 | 3 | 3 | 4 | 0 | 0 known |
 | 2026-11-11 | 3b Himalayas | Sonnet 5.5 | 9 | 4 | 4 | 1 | 0 | 0 known |
 | 2026-11-16 | 5 eligibility rules | Sonnet 5.5 | 13 | 9 | 1 | 3 | 0 | 0 known |
+| 2026-11-16 | 6 step pipeline | Sonnet 5.5 | 17 | 3 | 3 | 11 | 0 | 0 known |
 | 2026-11-16 | spec week 2 (draft 1) | Sonnet 5.5 | 12 groups, ~40 items | 2 design bugs (outbox cursor loses events; arq redelivery makes kill -9 recovery 10 min) | — | 5 gaps, 2 contradictions, scope, security | 0 | — |
 
 Caveat: "0 known" escapes because nobody was looking until 2026-11-16. From now on every later-found defect in
@@ -243,3 +244,26 @@ labeled sample did. Both are needed.
   dir, sample drawn among rejected vacancies with stored probability).
 - **Lesson:** the spec review paid for itself on the first try: both design bugs would have been expensive after
   PR 6 was written. Concurrency claims in a spec need the same "how does this commit?" check as code.
+
+## 2026-11-16 — PR 6 review: step engine (17 findings, 3 real bugs, 2 of them reproduced by the reviewer)
+
+Review of the uncommitted `w2-pipeline` tree by a read-only Sonnet session; it ran the suite, 11 own mutants
+and probe scripts. Verdict: "do not merge as is" — all blockers fixed the same day, see actions.
+
+| # | Severity | Finding | Action |
+|---|---|---|---|
+| 1 | blocker | New open-set invariant in `test_out_of_order_fetches_never_regress` ignored stale fetches; Hypothesis counterexample (late empty fetch applied first) failed the suite. Implementation was right, the assertion wrong. | Fixed: invariant computed over the accepted (non-stale) subsequence |
+| 2 | should-fix | Lease decay on batch tails: drain claimed 10 rows but heartbeat only the running one; rows 2..N expired mid-drain, got reclaimed by an overlapping drain and double-run (reviewer reproduced: 3 executions for 2 rows). Harmless for regex, double cost for PR 7 LLM steps. | Fixed: a heartbeat per claimed row starts before the first row runs; a row whose lease is lost is not started |
+| 3 | should-fix | Reconcile's multi-row INSERT and expanding `IN` binds hit asyncpg's 32767-parameter limit at ~8k rows (reviewer reproduced); reconcile would die permanently at 3 chain steps x 3000 vacancies. | Fixed: statements chunked (2000 rows / 10000 ids) |
+| 4 | should-fix | Race: commit-time next-step insert landing between reconcile's chain walk and its stale SELECT was superseded spuriously (healed a minute later). | Fixed: supersede only rows whose (vacancy, step) has a desired hash that differs; underivable rows are left to the claim-time input check |
+| 5 | should-fix | `updated_at` never changed: `onupdate` fires on ORM flushes only, every engine write is raw SQL; `steps status` "oldest waiting_human" actually measured age since creation. | Fixed: `updated_at=now()` on every raw UPDATE |
+| 6 | should-fix | Property test never exercised partial fetches (drew a `complete` flag and ignored it). | Fixed: flag passed through |
+| 7 | should-fix | Overlapping-drain pile-up concern. | No code change: arq cron jobs are unique, a running drain blocks the next enqueue; documented in worker.py |
+| 8 | should-fix | Backoff untested: a mutant making pending rows ignore `lease_until` survived. | Fixed: `test_backoff_delays_the_next_claim`; mutant added to the engine mutation list (9/9 killed) |
+| 9-11 | nit | Heartbeat died silently on a DB error; error paths recorded no latency; exhaustion overwrote the last real error message. | All three fixed |
+| 12-17 | nit | Reconcile scale (per-vacancy queries, unbounded skipped scan), `ORDER BY id` starving new rows during a backfill, baseline flap edge, migration importing the whole chain, dangling decisions.md reference, claim subquery hardening. | Migration now imports the step directly; claim uses a MATERIALIZED CTE; two-empty decision recorded and the 2026-11-11 one marked superseded; the rest accepted as PR 7+ scale work |
+
+Clean per the reviewer: fencing (every post-claim write), crash safety (single-transaction commits), the
+migration backfill (verified on a scratch DB with pre-seeded vacancies), two-empty-listings implementation,
+CLI injection surface, mypy/ruff. Note for the story: findings 2 and 3 were both *reproduced with probe
+scripts by the reviewer* before I touched anything — that is the review style worth keeping.

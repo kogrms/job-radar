@@ -3,14 +3,16 @@
 `apply_fetch` is the only writer of `vacancies`/`vacancy_events`. Guarantees:
 - applying the same fetch twice changes nothing the second time (the fetch is stale by then);
 - a fetch older than the newest one already applied to that board is ignored as stale;
-- only a complete fetch closes postings; a partial or failed fetch never closes anything;
+- only a complete fetch closes postings; a partial or failed fetch never closes anything; an EMPTY complete
+  listing closes the board only when the previous complete fetch of that board was empty too;
 - concurrent fetches of one board are serialized by a row lock on its `boards` row.
 
 Caller contract (collectors, PR 3):
 - `seen_at` is the time the fetch STARTED, taken from one clock (the worker's UTC). Two fetches of one board
   with the same `seen_at` count as the same fetch: the second is stale.
-- `complete=True` only for a full, successful board listing. An empty complete fetch closes every open posting
-  of the board, so an error page or an empty body must be reported as a failed fetch, never as complete.
+- `complete=True` only for a full, successful board listing. Two empty complete fetches in a row close every
+  open posting of the board, so an error page or an empty body must still be reported as a failed fetch,
+  never as complete.
 - Strip NUL characters from text and payload: Postgres rejects them in TEXT and JSONB.
 """
 
@@ -127,14 +129,20 @@ async def apply_fetch(
             counts["unchanged"] += 1
 
     if complete:
-        present = {p.source_job_id for p in postings}
-        gone = [v for jid, v in existing.items() if jid not in present and v.closed_at is None]
-        for v in gone:
-            v.closed_at = seen_at
-            events.append(
-                VacancyEvent(vacancy_id=v.id, kind="closed", at=seen_at, content_hash=v.content_hash)
-            )
-        counts["closed"] = len(gone)
+        # A single empty complete listing looks exactly like an ATS incident, and closing cancels pipeline
+        # work (step_runs are skipped as closed). Close on an empty listing only when the previous complete
+        # fetch of this board was empty too (decisions.md 2026-11-16, revisit of the 2026-11-11 rule).
+        empty = not postings
+        if not empty or board.last_complete_empty:
+            present = {p.source_job_id for p in postings}
+            gone = [v for jid, v in existing.items() if jid not in present and v.closed_at is None]
+            for v in gone:
+                v.closed_at = seen_at
+                events.append(
+                    VacancyEvent(vacancy_id=v.id, kind="closed", at=seen_at, content_hash=v.content_hash)
+                )
+            counts["closed"] = len(gone)
+        board.last_complete_empty = empty
 
     session.add_all(events)
     await session.flush()

@@ -81,7 +81,7 @@ Non-obvious choices with the alternatives we rejected. Format: context — optio
   the first fetch; the code stays a plain unit-of-work loop.
 - **Cost:** N round trips on a board's first fetch. Revisit if a board brings thousands of new postings at once.
 
-## 2026-11-11 — a complete empty listing closes the whole board (accepted for now)
+## 2026-11-11 — a complete empty listing closes the whole board (SUPERSEDED 2026-11-16, see below)
 
 - **Context:** PR 3 review: if an ATS returns a valid empty list during an incident, every open posting of that board
   gets a `closed` event, then `reopened` on the next poll.
@@ -274,3 +274,15 @@ Rules frozen (sha256 `3ae7d1a7…`, same as at sampling and in commit d59da27), 
   the quality gap; shadow results never feed the pipeline. Details in `docs/specs/week-2.md`, question 1.
 - **Alternatives rejected:** Haiku-only (no routing experience, gap unmeasured), Opus-only (order-of-magnitude
   cost, teaches nothing about cascades).
+
+## 2026-11-16 — two empty complete listings in a row close a board (PR 6)
+
+- **Supersedes** the 2026-11-11 "a complete empty listing closes the whole board" decision, on the revisit it
+  scheduled: with the step pipeline, closing a vacancy now cancels its pending work, so a one-off empty
+  listing during an ATS incident would skip a whole board's pipeline. `boards.last_complete_empty` tracks the
+  streak; a non-empty complete fetch resets it. Cost: a genuinely emptied board closes one fetch cycle later.
+- Also in PR 6, from the engine review (full table in `agent-log.md`): drain heartbeats start for the whole
+  claimed batch up front (batch tails were losing their leases mid-drain and got double-run), reconcile
+  statements are chunked under asyncpg's 32767-parameter limit, and a row whose (vacancy, step) has no
+  derivable desired input is left to the claim-time input check instead of being superseded (closes a race
+  with the commit-time next-step insert).

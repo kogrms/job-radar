@@ -19,6 +19,7 @@ the review) are not escapes.
 | 2026-11-11 | 3b Himalayas | Sonnet 5.5 | 9 | 4 | 4 | 1 | 0 | 0 known |
 | 2026-11-16 | 5 eligibility rules | Sonnet 5.5 | 13 | 9 | 1 | 3 | 0 | 0 known |
 | 2026-11-16 | 6 step pipeline | Sonnet 5.5 | 17 | 3 | 3 | 11 | 0 | 0 known |
+| 2026-11-17 | 7 LLM client + extract | Sonnet 5.5 | 9 | 5 | 2 | 2 | 0 | 0 known |
 | 2026-11-16 | spec week 2 (draft 1) | Sonnet 5.5 | 12 groups, ~40 items | 2 design bugs (outbox cursor loses events; arq redelivery makes kill -9 recovery 10 min) | — | 5 gaps, 2 contradictions, scope, security | 0 | — |
 
 Caveat: "0 known" escapes because nobody was looking until 2026-11-16. From now on every later-found defect in
@@ -267,3 +268,37 @@ Clean per the reviewer: fencing (every post-claim write), crash safety (single-t
 migration backfill (verified on a scratch DB with pre-seeded vacancies), two-empty-listings implementation,
 CLI injection surface, mypy/ruff. Note for the story: findings 2 and 3 were both *reproduced with probe
 scripts by the reviewer* before I touched anything — that is the review style worth keeping.
+
+
+## 2026-11-17 — PR 7 review: LLM layer and `extract` (9 findings, 5 real bugs, 2 decisions.md claims were false)
+
+Review of the uncommitted `w2-llm` tree by a read-only Sonnet session, barred from calling the API. It ran the
+suite, mypy, ruff, its own mutants and probe patches in a temp copy. The budget gate, the baseline protection
+(no key = rules-only chain) and the SDK facts were checked and found clean.
+
+| # | Severity | Finding | Action |
+|---|---|---|---|
+| 1 | bug | A ledger write failure (raw SQLAlchemy error) reached the engine as an unclassified exception = permanent: a billed valid result was thrown away; a ledger failure on the *shadow* call failed the whole step, contradicting decisions.md. Reviewer reproduced all three cases with a patched ledger. | Fixed: `LedgerError(TransientStepError)` wraps ledger DB errors and carries the spend so far; the shadow path catches every exception. Tests for both |
+| 2 | bug | The out-of-credits pause still burned an attempt per hourly probe: after 5 hours without a top-up rows went `failed/exhausted` — decisions.md said the opposite. | Fixed: `StepError.counts_attempt`; `OutOfCreditsError` hands the attempt back. Test: 5 probes, attempts stay 0 |
+| 3 | test gap | Nothing tested the advisory lock: replacing it with `pass` passed every test. Reviewer wrote a 4-engine `gather` test that fails without the lock. | Fixed: concurrent-claimers test; lock mutant added |
+| 4 | bug | Email regex quadratic, run on the full untruncated text at every reconcile: 50 000-char token = 7.4 s, enough to stall reconcile past its cron timeout. | Fixed: bounded patterns, cut before masking; linearity test on 400k chars |
+| 5 | bug (minor) | PII false positives ("+20 000 - 30 000 EUR" became `[phone]`, a phone's `\s` ate the next line's digit) and misses (Russian "8 (495) ..."). | Fixed: digit-count threshold, no newline/" - " joins, Russian pattern; tests per case. Remaining misses documented |
+| 6 | test gaps | Surviving mutants: cost formula (tests used `cost_usd` as their own oracle), chain wiring `if True`, shadow cost, transient shadow, blank-quote branch, 408, ignored `failed` status, `spent_today` time zone; near-tautological marker test. | All covered by new tests; 13 of them added to the mutation list |
+| 7 | bug (minor) | `compose.yml` passed only the key to the worker: the cap/model settings in `.env` silently did nothing in Docker. | Fixed: LLM settings passed through, empty = config default |
+| 8 | nit | Timeouts and `failed` responses wrote cost 0 over the estimate though they may be billed; a shadow hanging past the hard timeout discards the primary result. | Timeouts keep the estimate; `failed` goes through the billed invalid-output path. Shadow hang accepted (needs a stuck DB under 4x60 s request timeouts) |
+| 9 | nit | Retry after truncation reuses the same output limit; `stack` max 20 unenforced; title/location untruncated; multi-LLM-step starvation; reservations double-count started calls; `AsyncOpenAI` never closed; bad key fails rows one by one; model/price assumptions unverified live. | Title/location cut to 500 chars; client closed at shutdown; live eval (76/76 valid) verified models and prices; the rest accepted for now (one LLM step, conservative counting, `retry-failed` recovers) |
+
+Lesson: two of the five bugs were **claims in decisions.md that the code did not do** ("a shadow failure
+never fails the step", "out of credits does not burn attempts"). The reviewer read the decision record as a
+spec and tested it. Rule kept: a decisions.md claim about failure behaviour needs a test that would fail if
+the claim were false.
+
+## 2026-11-23 — PR 7 failed CI on lint: the agent linted a narrower set of files than CI
+
+- **What:** before committing PR 7 the agent ran `ruff check src tests scripts`; CI runs `ruff check` over the
+  whole repo. The Alembic-autogenerated `llm_calls` migration (old-style `typing` imports, an over-long CHECK
+  line, unformatted) passed locally and failed CI's first lint step, so mypy and the tests never ran there.
+- **Caught by:** CI on PR #9, step "uv run ruff check"; the failing step was read from the public Actions API.
+- **Fix:** migration autofixed and formatted (no schema change; the CHECK text still matches the model).
+- **Rule:** before a commit, run the CI steps exactly as `ci.yml` does (added to CLAUDE.md).
+

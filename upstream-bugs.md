@@ -13,7 +13,7 @@ Format: project — what — repro — status / link.
   3. Conditional region ("any EMEA country where we have a hiring presence") returned eligible.
 - **Repro:** 5 failing cases + 5 controls, run against the PR branch on 2026-11-05.
 - **Status:** review comment posted 2026-11-05 (kogrms). The author fixed all three in `e0ab297` with our cases
-  as tests; re-run confirmed the same day. Waiting for maintainer merge.
+  as tests; re-run confirmed the same day. Merged by the maintainer on 2026-11-05.
 - **Use here:** all ten cases go into this project's eligibility benchmark.
 
 ## ATS / job-board APIs (week-0 dataset recovery)

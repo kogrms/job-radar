@@ -62,6 +62,15 @@ services:
       LANGFUSE_BASE_URL: http://langfuse-web:3000
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      # The worker is the only container that talks to the LLM provider (spec PR 9: env per container).
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # LLM settings from .env; empty means the default in config.py.
+      LLM_DAILY_CAP_USD: ${LLM_DAILY_CAP_USD:-}
+      LLM_OUT_OF_CREDITS_PAUSE_SECONDS: ${LLM_OUT_OF_CREDITS_PAUSE_SECONDS:-}
+      EXTRACT_MODEL: ${EXTRACT_MODEL:-}
+      EXTRACT_SHADOW_MODEL: ${EXTRACT_SHADOW_MODEL:-}
+      EXTRACT_SHADOW_RATE: ${EXTRACT_SHADOW_RATE:-}
+      EXTRACT_REASONING_EFFORT: ${EXTRACT_REASONING_EFFORT:-}
       BOARDS_FILE: /config/boards.yml
     volumes:
       # Only the board list, read-only. The rest of the private dir never enters a container.

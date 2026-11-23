@@ -28,7 +28,7 @@ def test_kill_9_mid_step_recovers_within_the_budget(db_url: str) -> None:
         try:
             async with db.begin() as conn:
                 await conn.execute(
-                    text("TRUNCATE step_runs, vacancy_events, vacancies, boards RESTART IDENTITY")
+                    text("TRUNCATE llm_calls, step_runs, vacancy_events, vacancies, boards RESTART IDENTITY")
                 )
             async with make_sessionmaker(db)() as session, session.begin():
                 await apply_fetch(

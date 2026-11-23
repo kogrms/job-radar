@@ -27,6 +27,21 @@ class Settings(BaseSettings):
     step_hard_timeout_seconds: float = 300
     step_backoff_base_seconds: float = 30
 
+    # LLM (docs/specs/week-2.md, PR 7; models and prices in decisions.md 2026-11-17). Without a key the
+    # worker runs the LLM-free chain only. The daily cap is checked at claim time against the call ledger
+    # (UTC day, eval runs included); the prepaid balance on the provider side is the hard cap above it.
+    openai_api_key: SecretStr | None = None
+    llm_timeout_seconds: float = 60  # per request; 4 requests per run (2 primary + 2 shadow) < hard timeout
+    llm_daily_cap_usd: float = 2.0
+    llm_out_of_credits_pause_seconds: float = 3600
+    extract_model: str = "gpt-6-luna"
+    extract_shadow_model: str | None = "gpt-6.1-sol"
+    extract_shadow_rate: float = 0.10
+    extract_shadow_salt: str = "extract-shadow-v1"
+    extract_reasoning_effort: str | None = "low"
+    extract_max_output_tokens: int = 4000
+    extract_max_text_chars: int = 40000
+
     # Private data (past decisions, vacancy texts, labels). Never copied into the repo; unset in CI.
     private_dir: Path | None = None
     # Boards to poll (YAML, see examples/boards.yml). Personal, so it lives in the private dir.

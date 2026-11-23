@@ -35,11 +35,33 @@ class StepOutcome:
     prompt_version: str | None = None
 
 
-class TransientStepError(Exception):
+@dataclass(frozen=True)
+class RunContext:
+    """Who is running: lets a step tag what it spends (the LLM call ledger) with its run."""
+
+    step_run_id: int
+    vacancy_id: int
+    attempt: int
+
+
+class StepError(Exception):
+    """Base of the classified step errors. `cost_usd` is what the failed attempt already spent; the engine
+    stores it on the row (the LLM call ledger is the source of truth for spend either way).
+    `counts_attempt = False` hands the claim's attempt back: the failure says nothing about this row
+    (e.g. the provider's prepaid balance is empty), so it must not push the row toward the attempt cap."""
+
+    counts_attempt = True
+
+    def __init__(self, message: str, *, cost_usd: float | None = None) -> None:
+        super().__init__(message)
+        self.cost_usd = cost_usd
+
+
+class TransientStepError(StepError):
     """The call may succeed on retry (timeout, 429, 5xx, connection). The engine re-queues with backoff."""
 
 
-class PermanentStepError(Exception):
+class PermanentStepError(StepError):
     """Retrying cannot help (validation, other 4xx). The engine fails the run at once."""
 
 
@@ -60,6 +82,8 @@ class Step(Protocol):
 
     name: str
     version: str
+    # Upper-bound spend of one run in USD; > 0 puts the step under the engine's daily LLM budget gate.
+    cost_estimate_usd: float
 
     def build_input(self, vacancy: Vacancy, upstream: StepRun | None) -> StepInput | None:
         """Input for this vacancy from committed state, or None when the step does not apply.
@@ -69,7 +93,7 @@ class Step(Protocol):
         """
         ...
 
-    async def run(self, payload: dict[str, Any]) -> StepOutcome:
+    async def run(self, payload: dict[str, Any], ctx: RunContext) -> StepOutcome:
         """Compute the result. Raise TransientStepError / PermanentStepError; anything else is a bug and is
         treated as permanent. Long calls must tolerate cancellation (the engine enforces a hard timeout)."""
         ...

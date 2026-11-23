@@ -15,8 +15,8 @@ from job_radar.collectors.base import make_client
 from job_radar.config import get_settings
 from job_radar.db import make_engine, make_sessionmaker
 from job_radar.models import Board
-from job_radar.steps.chain import CHAIN
-from job_radar.steps.engine import Engine
+from job_radar.steps.chain import build_chain, make_llm
+from job_radar.steps.engine import Engine, LLMBudget
 from job_radar.store import apply_fetch
 
 log = logging.getLogger(__name__)
@@ -102,18 +102,28 @@ async def startup(ctx: dict[str, Any]) -> None:
     ctx["engine"] = make_engine(settings.database_url)
     ctx["sessionmaker"] = make_sessionmaker(ctx["engine"])
     ctx["http"] = make_client()
+    llm = make_llm(settings, ctx["sessionmaker"])
+    if llm is None:
+        log.warning("OPENAI_API_KEY is not set: LLM steps are off, the chain stops after the rules")
+    ctx["llm"] = llm
     ctx["steps"] = Engine(
         ctx["sessionmaker"],
-        CHAIN,
+        build_chain(settings, llm),
         lease_seconds=settings.step_lease_seconds,
         batch_size=settings.drain_batch_size,
         attempt_cap=settings.step_attempt_cap,
         hard_timeout_seconds=settings.step_hard_timeout_seconds,
         backoff_base_seconds=settings.step_backoff_base_seconds,
+        budget=LLMBudget(
+            daily_cap_usd=settings.llm_daily_cap_usd,
+            out_of_credits_pause_seconds=settings.llm_out_of_credits_pause_seconds,
+        ),
     )
 
 
 async def shutdown(ctx: dict[str, Any]) -> None:
+    if ctx.get("llm") is not None:
+        await ctx["llm"].close()
     await ctx["http"].aclose()
     await ctx["engine"].dispose()
 

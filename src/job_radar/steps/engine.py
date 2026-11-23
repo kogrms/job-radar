@@ -19,6 +19,10 @@ Design (docs/specs/week-2.md, PR 6; rationale in docs/decisions.md 2026-11-16):
   errors fail it at once. The hard attempt cap counts lease-expiry reclaims too, so a step that kills its
   worker ends as failed/exhausted instead of looping. Classification is by exception class, never by
   message text.
+- **Daily LLM budget at claim time** (PR 7). Steps with `cost_estimate_usd > 0` are claimed only while
+  today's spend (the `llm_calls` ledger, UTC day) plus an estimate for every costly row already running stays
+  under the cap, so concurrent claims cannot overshoot it by a batch of calls. A provider "out of credits"
+  answer pauses costly claims for a while instead of burning attempts. Rows over the cap simply stay pending.
 
 `failpoint` is a test hook called between transactions; crash tests raise a BaseException from it to simulate
 a worker dying at that boundary (nothing here catches BaseException, like a real SIGKILL).
@@ -36,7 +40,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from job_radar.models import StepRun, Vacancy
-from job_radar.steps.base import Step, StepInput, StepOutcome, TransientStepError
+from job_radar.steps.base import RunContext, Step, StepError, StepInput, StepOutcome, TransientStepError
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +53,19 @@ FENCE = "id = :id AND claim_token = :token AND status = 'running'"
 # asyncpg allows at most 32767 bind parameters per statement; stay well below it when chunking.
 _INSERT_CHUNK = 2000  # 4 parameters per row
 _IDS_CHUNK = 10000
+# Serializes budget-gated claims across workers (pg_advisory_xact_lock key; any constant unique to this app).
+_BUDGET_LOCK_KEY = 0x6A72_6275
+_TODAY_UTC = "date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'"
+_CLAIM_SQL = (
+    "WITH c AS MATERIALIZED (SELECT id FROM step_runs WHERE {claimable}"
+    "  AND attempts < :cap {extra} ORDER BY id LIMIT :n FOR UPDATE SKIP LOCKED)"
+    " UPDATE step_runs sr SET status='running', claim_token=gen_random_uuid()::text,"
+    " attempts=sr.attempts + 1,"
+    " lease_until=now() + make_interval(secs => :lease),"
+    " started_at=COALESCE(sr.started_at, now()), updated_at=now()"
+    " FROM c WHERE sr.id = c.id"
+    " RETURNING sr.id, sr.vacancy_id, sr.step, sr.input_hash, sr.claim_token, sr.attempts"
+)
 
 
 @dataclass(frozen=True)
@@ -59,6 +76,12 @@ class Claim:
     input_hash: str
     claim_token: str
     attempts: int
+
+
+@dataclass(frozen=True)
+class LLMBudget:
+    daily_cap_usd: float
+    out_of_credits_pause_seconds: float = 3600
 
 
 @dataclass(frozen=True)
@@ -80,6 +103,7 @@ class Engine:
         attempt_cap: int = 5,
         hard_timeout_seconds: float = 300,
         backoff_base_seconds: float = 30,
+        budget: LLMBudget | None = None,
         failpoint: Callable[[str], None] | None = None,
     ) -> None:
         if not chain:
@@ -94,6 +118,10 @@ class Engine:
         self.attempt_cap = attempt_cap
         self.hard_timeout_seconds = hard_timeout_seconds
         self.backoff_base_seconds = backoff_base_seconds
+        self.costly = {s.name: s.cost_estimate_usd for s in chain if s.cost_estimate_usd > 0}
+        if self.costly and budget is None:
+            raise ValueError(f"steps {sorted(self.costly)} spend money and need an LLMBudget")
+        self.budget = budget
         self._failpoint = failpoint
 
     def _fp(self, name: str) -> None:
@@ -239,22 +267,85 @@ class Engine:
                 ),
                 {"cap": self.attempt_cap},
             )
-            rows = (
-                await session.execute(
-                    text(
-                        f"WITH c AS MATERIALIZED (SELECT id FROM step_runs WHERE {CLAIMABLE}"
-                        "  AND attempts < :cap ORDER BY id LIMIT :n FOR UPDATE SKIP LOCKED)"
-                        " UPDATE step_runs sr SET status='running', claim_token=gen_random_uuid()::text,"
-                        " attempts=sr.attempts + 1,"
-                        " lease_until=now() + make_interval(secs => :lease),"
-                        " started_at=COALESCE(sr.started_at, now()), updated_at=now()"
-                        " FROM c WHERE sr.id = c.id"
-                        " RETURNING sr.id, sr.vacancy_id, sr.step, sr.input_hash, sr.claim_token, sr.attempts"
-                    ),
-                    {"cap": self.attempt_cap, "lease": self.lease_seconds, "n": self.batch_size},
+            if not self.costly:
+                rows = await self._claim(session, self.batch_size)
+            else:
+                rows = await self._claim(
+                    session, self.batch_size, "AND step NOT IN :costly", costly=list(self.costly)
                 )
-            ).all()
+                rows += await self._claim_within_budget(session, self.batch_size - len(rows))
         return [Claim(*row) for row in rows]
+
+    async def _claim(self, session: AsyncSession, n: int, extra: str = "", **params: Any) -> list[Any]:
+        if n <= 0:
+            return []
+        stmt = text(_CLAIM_SQL.format(claimable=CLAIMABLE, extra=extra))
+        if "costly" in params:
+            stmt = stmt.bindparams(bindparam("costly", expanding=True))
+        result = await session.execute(
+            stmt, {"cap": self.attempt_cap, "lease": self.lease_seconds, "n": n, **params}
+        )
+        return list(result.all())
+
+    async def _claim_within_budget(self, session: AsyncSession, slots: int) -> list[Any]:
+        """Claim costly rows while spend + reservations stay under the daily cap. Runs inside the claim
+        transaction under an advisory lock, so two drains cannot both spend the same remaining budget."""
+        assert self.budget is not None
+        await session.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _BUDGET_LOCK_KEY})
+        spent = float(
+            await session.scalar(
+                text(f"SELECT COALESCE(sum(cost_usd), 0) FROM llm_calls WHERE created_at >= {_TODAY_UTC}")
+            )
+            or 0
+        )
+        paused = bool(
+            await session.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM llm_calls WHERE outcome = 'out_of_credits'"
+                    " AND created_at > now() - make_interval(secs => :p))"
+                ),
+                {"p": self.budget.out_of_credits_pause_seconds},
+            )
+        )
+        running = (
+            await session.execute(
+                text(
+                    "SELECT step, count(*) FROM step_runs WHERE status = 'running' AND lease_until > now()"
+                    " AND step IN :costly GROUP BY step"
+                ).bindparams(bindparam("costly", expanding=True)),
+                {"costly": list(self.costly)},
+            )
+        ).all()
+        reserved = sum(self.costly[step] * count for step, count in running)
+        remaining = self.budget.daily_cap_usd - spent - reserved
+
+        rows: list[Any] = []
+        for step, estimate in self.costly.items():
+            left = slots - len(rows)
+            if left <= 0:
+                break
+            allowed = 0 if paused or remaining <= 0 else min(left, int(remaining // estimate))
+            got = await self._claim(session, allowed, "AND step = :step", step=step)
+            rows += got
+            remaining -= estimate * len(got)
+            if allowed < left:
+                waiting = await session.scalar(
+                    text(
+                        f"SELECT count(*) FROM step_runs WHERE {CLAIMABLE} AND attempts < :cap AND step = :s"
+                    ),
+                    {"cap": self.attempt_cap, "s": step},
+                )
+                if waiting:
+                    log.info(
+                        "budget gate holds %s %s rows: %s (spent today $%.4f, reserved $%.4f, cap $%.2f)",
+                        waiting,
+                        step,
+                        "provider out of credits, paused" if paused else "daily cap reached",
+                        spent,
+                        reserved,
+                        self.budget.daily_cap_usd,
+                    )
+        return rows
 
     async def _fenced(self, claim: Claim, sets: str, params: dict[str, Any]) -> bool:
         """Apply an UPDATE to the claimed row iff the claim still holds. False means the lease was lost."""
@@ -324,7 +415,7 @@ class Engine:
 
         try:
             async with asyncio.timeout(self.hard_timeout_seconds):
-                outcome = await step.run(inp.payload)
+                outcome = await step.run(inp.payload, RunContext(claim.id, claim.vacancy_id, claim.attempts))
         except TimeoutError as exc:
             return await self._record_error(claim, TransientStepError(f"hard timeout: {exc}"), latency_ms())
         except Exception as exc:
@@ -407,20 +498,23 @@ class Engine:
 
     async def _record_error(self, claim: Claim, exc: Exception, latency_ms: int) -> str:
         msg = f"{type(exc).__name__}: {exc}"[:2000]
+        cost = exc.cost_usd if isinstance(exc, StepError) else None
         if isinstance(exc, TransientStepError):
             backoff = self.backoff_base_seconds * 2 ** (claim.attempts - 1)
+            give_back = 0 if exc.counts_attempt else 1
             requeued = await self._fenced(
                 claim,
                 "status='pending', error_class='transient', error_message=:msg, claim_token=NULL,"
-                " latency_ms=:latency, lease_until=now() + make_interval(secs => :backoff)",
-                {"msg": msg, "backoff": backoff, "latency": latency_ms},
+                " latency_ms=:latency, cost_usd=:cost, attempts=attempts - :give_back,"
+                " lease_until=now() + make_interval(secs => :backoff)",
+                {"msg": msg, "backoff": backoff, "latency": latency_ms, "cost": cost, "give_back": give_back},
             )
             return "requeued" if requeued else "lost"
         failed = await self._fenced(
             claim,
             "status='failed', error_class='permanent', error_message=:msg, result=NULL, claim_token=NULL,"
-            " latency_ms=:latency, lease_until=NULL, finished_at=now()",
-            {"msg": msg, "latency": latency_ms},
+            " latency_ms=:latency, cost_usd=:cost, lease_until=NULL, finished_at=now()",
+            {"msg": msg, "latency": latency_ms, "cost": cost},
         )
         return "failed" if failed else "lost"
 

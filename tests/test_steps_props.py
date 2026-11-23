@@ -114,7 +114,7 @@ def test_any_interleaving_of_fetches_crashes_and_drains_converges(db_url: str, o
         try:
             async with db.begin() as conn:
                 await conn.execute(
-                    text("TRUNCATE step_runs, vacancy_events, vacancies, boards RESTART IDENTITY")
+                    text("TRUNCATE llm_calls, step_runs, vacancy_events, vacancies, boards RESTART IDENTITY")
                 )
             chain = [FakeStep("fa"), FakeStep("fb")]
             steps = make_steps(db, chain=chain, attempt_cap=100, backoff_base_seconds=0)

@@ -52,6 +52,8 @@ Raw vacancy text is stored at collection time, always (lesson from week 0: close
   downgrade the dev and test DBs first), otherwise Alembic cannot find the current revision.
 - After changing a worker task signature, rebuild the worker container (`docker compose up -d --build worker`)
   before enqueueing: an old worker takes the job and fails (2026-11-11).
+- A claim in `docs/decisions.md` about failure behaviour ("X never fails the step", "Y does not burn
+  attempts") ships with a test that fails if the claim is false (PR 7 review: two such claims were untrue).
 - Mutation checks run on a temporary copy of the repo, never on the working tree; run the unmutated copy first as a
   baseline (two accidents on 2026-11-11, see `agent-log.md`). No ad-hoc shell loops that write files.
 - Local stack security baseline (checked 2026-11-11): every published port binds to 127.0.0.1; app containers get

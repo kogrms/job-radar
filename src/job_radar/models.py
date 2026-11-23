@@ -24,6 +24,16 @@ EVENT_KINDS = ("opened", "changed", "closed", "reopened")
 STEP_STATUSES = ("pending", "running", "done", "failed", "waiting_human", "skipped")
 ERROR_CLASSES = ("transient", "permanent", "exhausted")
 SKIP_REASONS = ("closed", "superseded", "baseline", "budget")
+LLM_CALL_OUTCOMES = (
+    "started",  # written before the request: a worker killed mid-call leaves its estimate counted as spend
+    "ok",
+    "invalid",  # answered, but the output failed the schema or a step check (billed all the same)
+    "refusal",
+    "transient_error",
+    "permanent_error",
+    "out_of_credits",  # the provider says the prepaid balance is empty: the budget gate pauses LLM steps
+)
+LLM_CALL_ROLES = ("primary", "shadow")
 
 
 class Base(DeclarativeBase):
@@ -144,3 +154,42 @@ class VacancyEvent(Base):
     kind: Mapped[str] = mapped_column(String(16))
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     content_hash: Mapped[str] = mapped_column(String(64))
+
+
+class LLMCall(Base):
+    """Ledger of every LLM request (docs/specs/week-2.md, PR 7) and the source of truth for spend.
+
+    A row is inserted (own transaction) before the request with the estimated cost and updated with the real
+    usage after it, so spend survives fenced-off results, failed runs and a worker killed mid-call. The daily
+    budget gate sums `cost_usd` over today's rows. Eval scripts write here too (`step_run_id` NULL).
+    """
+
+    __tablename__ = "llm_calls"
+    __table_args__ = (
+        CheckConstraint(f"outcome IN {LLM_CALL_OUTCOMES!r}", name="outcome_known"),
+        CheckConstraint(f"role IN {LLM_CALL_ROLES!r}", name="role_known"),
+        CheckConstraint("cost_usd >= 0", name="cost_non_negative"),
+        Index("ix_llm_calls_created_at", "created_at"),
+        Index("ix_llm_calls_step_run", "step_run_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purpose: Mapped[str] = mapped_column(String(64))  # step name, or "eval:<step>" for eval scripts
+    step_run_id: Mapped[int | None] = mapped_column(ForeignKey("step_runs.id"))
+    vacancy_id: Mapped[int | None] = mapped_column(ForeignKey("vacancies.id"))
+    role: Mapped[str] = mapped_column(String(16))
+    attempt: Mapped[int] = mapped_column()  # 1, or 2 for the retry with the validation error attached
+    model: Mapped[str] = mapped_column(String(64))  # as requested (prices are keyed by it)
+    response_model: Mapped[str | None] = mapped_column(String(64))  # as reported (may be a dated snapshot)
+    prompt_version: Mapped[str | None] = mapped_column(String(64))
+    outcome: Mapped[str] = mapped_column(String(24))
+    input_tokens: Mapped[int | None] = mapped_column()
+    cached_input_tokens: Mapped[int | None] = mapped_column()
+    output_tokens: Mapped[int | None] = mapped_column()  # includes reasoning tokens
+    reasoning_tokens: Mapped[int | None] = mapped_column()
+    cost_usd: Mapped[float] = mapped_column(Numeric(10, 6, asdecimal=False))
+    latency_ms: Mapped[int | None] = mapped_column()
+    request_id: Mapped[str | None] = mapped_column(String(128))
+    error_message: Mapped[str | None] = mapped_column(Text)

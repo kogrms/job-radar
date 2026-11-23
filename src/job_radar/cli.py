@@ -6,8 +6,10 @@ import sys
 
 from job_radar.config import get_settings
 from job_radar.db import make_engine, make_sessionmaker
+from job_radar.llm.ledger import Ledger
 from job_radar.steps import ops
-from job_radar.steps.chain import CHAIN
+from job_radar.steps.chain import STEP_NAMES
+from job_radar.steps.extract_step import worst_case_usd
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -18,13 +20,13 @@ def _parser() -> argparse.ArgumentParser:
     steps_sub = steps.add_subparsers(dest="steps_command", required=True)
     steps_sub.add_parser("status", help="counts by step and status, stuck runs, oldest waiting_human")
     retry = steps_sub.add_parser("retry-failed", help="put failed runs of one step back to pending")
-    retry.add_argument("--step", required=True, choices=[s.name for s in CHAIN])
+    retry.add_argument("--step", required=True, choices=STEP_NAMES)
     retry.add_argument("--limit", type=int, default=None)
 
     backfill = sub.add_parser(
         "backfill", help="release skipped/baseline rows of open vacancies into the pipeline"
     )
-    backfill.add_argument("--step", required=True, choices=[s.name for s in CHAIN])
+    backfill.add_argument("--step", required=True, choices=STEP_NAMES)
     backfill.add_argument("--limit", type=int, required=True)
     backfill.add_argument("--source", default=None)
     backfill.add_argument("--dry-run", action="store_true")
@@ -47,6 +49,8 @@ async def _run(args: argparse.Namespace) -> int:
                 print(f"ATTENTION: {status.stuck_running} runs 'running' for over 3 leases")
             if status.oldest_waiting_human_s is not None:
                 print(f"oldest waiting_human: {status.oldest_waiting_human_s / 3600:.1f} h")
+            spent = await Ledger(sessionmaker).spent_today()
+            print(f"LLM spend today (UTC): ${spent:.4f} of the ${settings.llm_daily_cap_usd:.2f} daily cap")
         elif args.command == "steps" and args.steps_command == "retry-failed":
             async with sessionmaker() as session, session.begin():
                 n = await ops.retry_failed(session, args.step, limit=args.limit)
@@ -58,7 +62,17 @@ async def _run(args: argparse.Namespace) -> int:
                 )
             verb = "would release" if args.dry_run else "released"
             print(f"{verb} {n} baseline rows of {args.step}")
-            # LLM steps (week 2 PR 7): print the cost estimate here before releasing anything.
+            # Every released row flows on into the LLM steps (extract follows the rules).
+            per_run = worst_case_usd(
+                model=settings.extract_model,
+                shadow_model=settings.extract_shadow_model if settings.extract_shadow_rate > 0 else None,
+                max_output_tokens=settings.extract_max_output_tokens,
+                max_text_chars=settings.extract_max_text_chars,
+            )
+            print(
+                f"downstream LLM cost: worst case ${n * per_run:.2f} (real runs cost a small fraction);"
+                f" spend is held to ${settings.llm_daily_cap_usd:.2f} a day by the budget gate"
+            )
         return 0
     finally:
         await engine.dispose()

@@ -19,6 +19,7 @@ from job_radar.models import StepRun, Vacancy
 from job_radar.postings import Posting
 from job_radar.steps.base import (
     PermanentStepError,
+    RunContext,
     StepInput,
     StepOutcome,
     TransientStepError,
@@ -63,6 +64,7 @@ class FakeStep:
     ) -> None:
         self.name = name
         self.version = "t1"
+        self.cost_estimate_usd = 0.0
         self.failures = failures
         self.fail_with = fail_with
         self.sleep = sleep
@@ -75,7 +77,7 @@ class FakeStep:
             payload["upstream_result"] = upstream.result
         return StepInput(payload=payload, hash=input_hash(self.name, self.version, payload))
 
-    async def run(self, payload: dict[str, Any]) -> StepOutcome:
+    async def run(self, payload: dict[str, Any], ctx: RunContext) -> StepOutcome:
         self.calls.append(payload)
         if self.sleep:
             await asyncio.sleep(self.sleep)
@@ -102,7 +104,9 @@ def make_steps(db: AsyncEngine, chain: list[Any] | None = None, **kwargs: Any) -
 
 async def reset(db: AsyncEngine) -> None:
     async with db.begin() as conn:
-        await conn.execute(text("TRUNCATE step_runs, vacancy_events, vacancies, boards RESTART IDENTITY"))
+        await conn.execute(
+            text("TRUNCATE llm_calls, step_runs, vacancy_events, vacancies, boards RESTART IDENTITY")
+        )
 
 
 async def fetch(db: AsyncEngine, at: datetime, postings: list[Posting], *, complete: bool = True) -> None:

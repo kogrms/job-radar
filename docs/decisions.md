@@ -299,3 +299,53 @@ Rules frozen (sha256 `3ae7d1a7…`, same as at sampling and in commit d59da27), 
 - **Local models are on hold** (owner, 2026-11-17). If they come back: Ollama serves an OpenAI-compatible API,
   so the same client with another `base_url` would cover them.
 - **Gave up:** nothing measured yet. Claude can return as an extra column in the eval tables.
+
+## 2026-11-17 — PR 7: the LLM layer, `extract`, and where they depart from the spec
+
+- **Spend ledger `llm_calls`, not `step_runs.cost_usd`, is what the daily cap sums.** A row is written before
+  each request with an estimate and updated with the real usage after it, each in its own transaction. The
+  spec's "sum of `step_runs.cost_usd` incl. failed and fenced-off runs" cannot see a fenced-off result (the
+  commit that would carry its cost is refused) or a worker killed mid-call; the ledger sees both (a killed
+  call keeps its estimate). `step_runs.cost_usd` stays as the per-run figure. Eval scripts write to the same
+  ledger, so an eval counts toward the pipeline's cap — deliberate: the cap is about money, not about steps.
+- **Budget gate at claim time:** under a transaction-scoped advisory lock, a costly step is claimed only
+  while today's spend (UTC day) + a worst-case estimate for every costly row still running + the new claims
+  stay under the cap. The estimate is the worst case of one run (two primary attempts at max output, plus two
+  shadow attempts, since the claim cannot tell which vacancies are sampled) — about $0.18 at the defaults, so
+  the gate stops claiming that much before the cap. Rows over the cap stay `pending` (logged); no
+  `skipped/budget` status, so nothing needs reviving the next day.
+- **Out of credits pauses, it does not burn attempts.** OpenAI's `insufficient_quota` /
+  `credit_balance_exhausted` codes become `OutOfCreditsError` (transient for that row) and are marked in the
+  ledger; the gate then claims no costly rows for `llm_out_of_credits_pause_seconds` (1 h), and the error hands
+  the claim's attempt back (`StepError.counts_attempt = False`), so hourly probes never push a row to
+  "exhausted". Without both, every pending row would run its 5 attempts out within hours of the balance
+  hitting zero (the review caught that the first version paused but still burned attempts).
+- **Ledger write failures are transient, not permanent.** A DB blip around a billed call re-queues the run;
+  the ledger row keeps its estimate (over-counted, never lost). A request timeout also keeps the estimate,
+  since the provider may have billed it; a `failed` response goes through the invalid-output path with its
+  reported usage.
+- **`responses.create` with a strict JSON schema, validated by us — not `responses.parse`.** `parse` raises on
+  an invalid answer and the usage of that billed answer is lost. The schema comes from the SDK's own
+  conversion (`openai.lib.type_to_response_format_param`). `store=False`; SDK `max_retries=0`.
+- **Shadow results live inside the deciding run's `result.shadow`** (and in the ledger as `role='shadow'`),
+  not in separate `step_runs` rows: the unique key (vacancy, step, input_hash) has room for one run, and a
+  separate shadow step would sit in the linear chain and block the steps after it. `step_runs.model` is always
+  the primary model. A shadow failure of any kind (provider, invalid output, ledger) is recorded in
+  `result.shadow` with its cost and never fails the step. Sampling is seeded by vacancy id.
+- **The location quote must be a substring of what the model was shown** — title, the ATS location field, or
+  the PII-masked text — not of `raw_text` alone: `location_raw` is often the only place the policy is stated,
+  and masking changes the text.
+- **Untrusted text is fenced by content-derived markers** (`BEGIN/END POSTING <sha256 prefix of the
+  content>`): a posting cannot contain its own closing marker. The masking is a stopgap for emails and phone
+  numbers only, applied after the text is cut to its limit, with bounded patterns (the first email regex was
+  quadratic on long unbroken tokens); phone patterns are narrow so salary ranges and years survive.
+- **`extract` follows the rules step in the chain**, so it is desired only for vacancies whose rules run is
+  `done`. The ~3000 baseline vacancies get no extraction until `job-radar backfill --step eligibility_rules`
+  releases them, and the CLI prints the downstream worst-case cost; the daily cap bounds the actual spend.
+- **Input hash includes model, reasoning effort, max output and the prompt's sha**, so a config or prompt
+  change re-runs extraction (within the cap) instead of mixing results of different setups under one key.
+- **Eval labels:** of the 46 "verbatim" location labels on the 76 texts, only 15 occur in the stored text; the
+  other 31 were copied from the tracker's location field, which the model is not given (it would hand over the
+  answer). The eval scores the 15 and reports the 31 as "not scorable" instead of counting them as misses.
+- **Defaults:** `gpt-6-luna` with reasoning effort `low` (its default is `medium`; extraction is narrow),
+  shadow `gpt-6.1-sol` on 10%, max output 4000 tokens, text cut at 40 000 characters, $2/day cap.
